@@ -13,6 +13,8 @@ Enter these values when prompted by `./discourse-setup` per the [install guide](
     SMTP server address? smtp.mailgun.org
     SMTP user name?      [SMTP credentials for your domain under domains tab]
     SMTP password?       [SMTP credentials for your domain under domains tab]
+    SMTP PORT: 578
+  
 
 #### [Elastic Email][ee] &mdash; 150k emails/month
 
