@@ -17,8 +17,8 @@ describe TopicQuery do
       category.set_permissions(group => :full)
       category.save
 
-      topic = Fabricate(:topic, category: category)
-      topic = Fabricate(:topic, visible: false)
+      Fabricate(:topic, category: category)
+      Fabricate(:topic, visible: false)
 
       expect(TopicQuery.new(nil).list_latest.topics.count).to eq(0)
       expect(TopicQuery.new(user).list_latest.topics.count).to eq(0)
@@ -98,7 +98,7 @@ describe TopicQuery do
   context 'bookmarks' do
     it "filters and returns bookmarks correctly" do
       post = Fabricate(:post)
-      reply = Fabricate(:post, topic_id: post.topic_id)
+      reply = Fabricate(:post, topic: post.topic)
 
       post2 = Fabricate(:post)
 
@@ -160,32 +160,37 @@ describe TopicQuery do
   context 'tag filter' do
     let(:tag)       { Fabricate(:tag) }
     let(:other_tag) { Fabricate(:tag) }
+    let(:uppercase_tag) { Fabricate(:tag, name: "HeLlO") }
 
     before do
       SiteSetting.tagging_enabled = true
     end
 
     context "no category filter" do
-      # create some topics before each test:
       let!(:tagged_topic1) { Fabricate(:topic, tags: [tag]) }
       let!(:tagged_topic2) { Fabricate(:topic, tags: [other_tag]) }
       let!(:tagged_topic3) { Fabricate(:topic, tags: [tag, other_tag]) }
+      let!(:tagged_topic4) { Fabricate(:topic, tags: [uppercase_tag]) }
       let!(:no_tags_topic) { Fabricate(:topic) }
 
       it "returns topics with the tag when filtered to it" do
-        expect(TopicQuery.new(moderator, tags: [tag.name]).list_latest.topics.map(&:id).sort).to eq([tagged_topic1.id, tagged_topic3.id].sort)
-        expect(TopicQuery.new(moderator, tags: [tag.id]).list_latest.topics.map(&:id).sort).to eq([tagged_topic1.id, tagged_topic3.id].sort)
+        expect(TopicQuery.new(moderator, tags: tag.name).list_latest.topics)
+          .to contain_exactly(tagged_topic1, tagged_topic3)
 
-        two_tag_topic = TopicQuery.new(moderator, tags: [tag.name]).list_latest.topics.find { |t| t.id == tagged_topic3.id }
-        expect(two_tag_topic.tags.size).to eq(2)
+        expect(TopicQuery.new(moderator, tags: [tag.id]).list_latest.topics)
+          .to contain_exactly(tagged_topic1, tagged_topic3)
 
-        # topics with ANY of the given tags:
-        expect(TopicQuery.new(moderator, tags: [tag.name, other_tag.name]).list_latest.topics.map(&:id).sort).to eq([tagged_topic1.id, tagged_topic2.id, tagged_topic3.id].sort)
-        expect(TopicQuery.new(moderator, tags: [tag.id, other_tag.id]).list_latest.topics.map(&:id).sort).to eq([tagged_topic1.id, tagged_topic2.id, tagged_topic3.id].sort)
+        expect(TopicQuery.new(
+          moderator, tags: [tag.name, other_tag.name]
+        ).list_latest.topics).to contain_exactly(
+          tagged_topic1, tagged_topic2, tagged_topic3
+        )
 
-        # TODO: topics with ALL of the given tags:
-        # expect(TopicQuery.new(moderator, tags: [tag.name, other_tag.name]).list_latest.topics.map(&:id)).to eq([tagged_topic3.id].sort)
-        # expect(TopicQuery.new(moderator, tags: [tag.id, other_tag.id]).list_latest.topics.map(&:id)).to eq([tagged_topic3.id].sort)
+        expect(TopicQuery.new(moderator, tags: [tag.id, other_tag.id]).list_latest.topics)
+          .to contain_exactly(tagged_topic1, tagged_topic2, tagged_topic3)
+
+        expect(TopicQuery.new(moderator, tags: ["hElLo"]).list_latest.topics)
+          .to contain_exactly(tagged_topic4)
       end
 
       it "can return topics with all specified tags" do
@@ -207,9 +212,9 @@ describe TopicQuery do
 
       it "returns topics in the given category with the given tag" do
         tagged_topic1 = Fabricate(:topic, category: category1, tags: [tag])
-        tagged_topic2 = Fabricate(:topic, category: category2, tags: [tag])
+        _tagged_topic2 = Fabricate(:topic, category: category2, tags: [tag])
         tagged_topic3 = Fabricate(:topic, category: category1, tags: [tag, other_tag])
-        no_tags_topic = Fabricate(:topic, category: category1)
+        _no_tags_topic = Fabricate(:topic, category: category1)
 
         expect(TopicQuery.new(moderator, category: category1.id, tags: [tag.name]).list_latest.topics.map(&:id).sort).to eq([tagged_topic1.id, tagged_topic3.id].sort)
         expect(TopicQuery.new(moderator, category: category2.id, tags: [other_tag.name]).list_latest.topics.size).to eq(0)
@@ -484,7 +489,7 @@ describe TopicQuery do
 
       context 'list_unread' do
         it 'lists topics correctly' do
-          new_topic = Fabricate(:post, user: creator).topic
+          _new_topic = Fabricate(:post, user: creator).topic
 
           expect(topic_query.list_unread.topics).to eq([])
           expect(topic_query.list_read.topics).to match_array([fully_read, partially_read])
@@ -639,7 +644,7 @@ describe TopicQuery do
     end
   end
 
-  context 'suggested_for message do' do
+  context 'list_related_for do' do
 
     let(:user) do
       Fabricate(:admin)
@@ -674,11 +679,6 @@ describe TopicQuery do
       pm_to_group = create_pm(sender, target_group_names: [group_with_user.name])
       pm_to_user = create_pm(sender, target_usernames: [user.username])
 
-      new_pm = create_pm(target_usernames: [user.username])
-
-      unread_pm = create_pm(target_usernames: [user.username])
-      read(user, unread_pm, 0)
-
       old_unrelated_pm = create_pm(target_usernames: [user.username])
       read(user, old_unrelated_pm, 1)
 
@@ -688,13 +688,17 @@ describe TopicQuery do
       related_by_group_pm = create_pm(sender, target_group_names: [group_with_user.name])
       read(user, related_by_group_pm, 1)
 
-      expect(TopicQuery.new(user).list_suggested_for(pm_to_group).topics.map(&:id)).to(
-        eq([related_by_group_pm.id, related_by_user_pm.id, pm_to_user.id])
+      expect(TopicQuery.new(user).list_related_for(pm_to_group).topics.map(&:id)).to(
+        eq([related_by_group_pm.id])
       )
 
-      expect(TopicQuery.new(user).list_suggested_for(pm_to_user).topics.map(&:id)).to(
-        eq([new_pm.id, unread_pm.id, related_by_user_pm.id])
+      expect(TopicQuery.new(user).list_related_for(pm_to_user).topics.map(&:id)).to(
+        eq([related_by_user_pm.id])
       )
+
+      SiteSetting.enable_personal_messages = false
+      expect(TopicQuery.new(user).list_related_for(pm_to_group)).to be_blank
+      expect(TopicQuery.new(user).list_related_for(pm_to_user)).to be_blank
     end
   end
 
@@ -819,6 +823,19 @@ describe TopicQuery do
             expect(suggested_topics).to eq([private_group_topic.id, private_message.id])
           end
         end
+
+        context "by tag filter" do
+          let(:tag) { Fabricate(:tag) }
+          let!(:user) { group_user }
+
+          it 'should return only tagged topics' do
+            Fabricate(:topic_tag, topic: private_message, tag: tag)
+            Fabricate(:topic_tag, topic: private_group_topic)
+
+            expect(TopicQuery.new(user, tags: [tag.name]).list_private_messages_tag(user).topics).to eq([private_message])
+          end
+
+        end
       end
 
       context 'with some existing topics' do
@@ -868,10 +885,161 @@ describe TopicQuery do
           expect(suggested_topics[1, 3]).to include(closed_topic.id)
           expect(suggested_topics[1, 3]).to include(archived_topic.id)
         end
+      end
+    end
+  end
 
+  describe '#list_group_topics' do
+    let(:group) { Fabricate(:group) }
+
+    let(:user) do
+      user = Fabricate(:user)
+      group.add(user)
+      user
+    end
+
+    let(:user2) do
+      user = Fabricate(:user)
+      group.add(user)
+      user
+    end
+
+    let(:user3) { Fabricate(:user) }
+
+    let(:private_category) do
+      Fabricate(:private_category, group: group)
+    end
+
+    let!(:private_message_topic) { Fabricate(:private_message_post, user: user).topic }
+    let!(:topic1) { Fabricate(:topic, user: user) }
+    let!(:topic2) { Fabricate(:topic, user: user, category: Fabricate(:category)) }
+    let!(:topic3) { Fabricate(:topic, user: user, category: private_category) }
+    let!(:topic4) { Fabricate(:topic) }
+    let!(:topic5) { Fabricate(:topic, user: user, visible: false) }
+    let!(:topic6) { Fabricate(:topic, user: user2) }
+
+    it 'should return the right lists for anon user' do
+      topics = TopicQuery.new.list_group_topics(group).topics
+
+      expect(topics).to contain_exactly(topic1, topic2, topic6)
+    end
+
+    it 'should retun the right list for users in the same group' do
+      topics = TopicQuery.new(user).list_group_topics(group).topics
+
+      expect(topics).to contain_exactly(topic1, topic2, topic3, topic6)
+
+      topics = TopicQuery.new(user2).list_group_topics(group).topics
+
+      expect(topics).to contain_exactly(topic1, topic2, topic3, topic6)
+    end
+
+    it 'should return the right list for user no in the group' do
+      topics = TopicQuery.new(user3).list_group_topics(group).topics
+
+      expect(topics).to contain_exactly(topic1, topic2, topic6)
+    end
+  end
+
+  describe '#list_private_messages_group' do
+    let(:group) { Fabricate(:group) }
+
+    let!(:group_message) do
+      Fabricate(:private_message_topic,
+        allowed_groups: [group],
+        topic_allowed_users: [
+          Fabricate.build(:topic_allowed_user, user: Fabricate(:user)),
+        ]
+      )
+    end
+
+    before do
+      group.add(creator)
+    end
+
+    it 'should return the right list for a group user' do
+      topics = TopicQuery.new(nil, group_name: group.name)
+        .list_private_messages_group(creator)
+        .topics
+
+      expect(topics).to contain_exactly(group_message)
+    end
+
+    it 'should return the right list for an admin not part of the group' do
+      topics = TopicQuery.new(nil, group_name: group.name)
+        .list_private_messages_group(Fabricate(:admin))
+        .topics
+
+      expect(topics).to contain_exactly(group_message)
+    end
+
+    it 'should return the right list for a user not part of the group' do
+      topics = TopicQuery.new(nil, group_name: group.name)
+        .list_private_messages_group(Fabricate(:user))
+        .topics
+
+      expect(topics).to eq([])
+    end
+  end
+
+  context "shared drafts" do
+    let(:category) { Fabricate(:category) }
+    let(:shared_drafts_category) { Fabricate(:category) }
+    let!(:topic) { Fabricate(:topic, category: shared_drafts_category) }
+    let!(:shared_draft) { Fabricate(:shared_draft, topic: topic, category: category) }
+    let(:admin) { Fabricate(:admin) }
+    let(:user) { Fabricate(:user) }
+    let(:group) { Fabricate(:group) }
+
+    before do
+      shared_drafts_category.set_permissions(group => :full)
+      shared_drafts_category.save
+      SiteSetting.shared_drafts_category = shared_drafts_category.id
+    end
+
+    context "destination_category_id" do
+      it "doesn't allow regular users to query destination_category_id" do
+        list = TopicQuery.new(user, destination_category_id: category.id).list_latest
+        expect(list.topics).not_to include(topic)
+      end
+
+      it "allows staff users to query destination_category_id" do
+        list = TopicQuery.new(admin, destination_category_id: category.id).list_latest
+        expect(list.topics).to include(topic)
       end
     end
 
-  end
+    context "latest" do
+      it "doesn't include shared topics unless filtering by category" do
+        list = TopicQuery.new(moderator).list_latest
+        expect(list.topics).not_to include(topic)
+      end
 
+      it "doesn't include shared draft topics for regular users" do
+        group.add(user)
+        SiteSetting.shared_drafts_category = nil
+        list = TopicQuery.new(user).list_latest
+        expect(list.topics).to include(topic)
+
+        SiteSetting.shared_drafts_category = shared_drafts_category.id
+        list = TopicQuery.new(user).list_latest
+        expect(list.topics).not_to include(topic)
+      end
+    end
+
+    context "unread" do
+      let!(:partially_read) do
+        topic = Fabricate(:topic, category: shared_drafts_category)
+        Fabricate(:post, user: creator, topic: topic).topic
+        TopicUser.update_last_read(admin, topic.id, 0, 0, 0)
+        TopicUser.change(admin.id, topic.id, notification_level: TopicUser.notification_levels[:tracking])
+        topic
+      end
+
+      it 'does not remove topics from unread' do
+        expect(TopicQuery.new(admin).list_latest.topics).not_to include(partially_read) # Check we set up the topic/category correctly
+        expect(TopicQuery.new(admin).list_unread.topics).to include(partially_read)
+      end
+    end
+  end
 end

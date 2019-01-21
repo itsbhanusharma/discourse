@@ -1,11 +1,13 @@
 class QueuedPost < ActiveRecord::Base
 
-  class InvalidStateTransition < StandardError; end;
+  class InvalidStateTransition < StandardError; end
 
   belongs_to :user
   belongs_to :topic
   belongs_to :approved_by, class_name: "User"
   belongs_to :rejected_by, class_name: "User"
+
+  after_commit :trigger_queued_post_event, on: :create
 
   def create_pending_action
     UserAction.log_action!(action_type: UserAction::PENDING,
@@ -13,6 +15,11 @@ class QueuedPost < ActiveRecord::Base
                            acting_user_id: user_id,
                            target_topic_id: topic_id,
                            queued_post_id: id)
+  end
+
+  def trigger_queued_post_event
+    DiscourseEvent.trigger(:queued_post_created, self)
+    true
   end
 
   def self.states
@@ -47,6 +54,7 @@ class QueuedPost < ActiveRecord::Base
 
   def reject!(rejected_by)
     change_to!(:rejected, rejected_by)
+    StaffActionLogger.new(rejected_by).log_post_rejected(self)
     DiscourseEvent.trigger(:rejected_post, self)
   end
 
@@ -62,7 +70,12 @@ class QueuedPost < ActiveRecord::Base
   def approve!(approved_by)
     created_post = nil
 
-    creator = PostCreator.new(user, create_options.merge(skip_validations: true, skip_jobs: true))
+    creator = PostCreator.new(user, create_options.merge(
+      skip_validations: true,
+      skip_jobs: true,
+      skip_events: true
+    ))
+
     QueuedPost.transaction do
       change_to!(:approved, approved_by)
 
@@ -72,11 +85,15 @@ class QueuedPost < ActiveRecord::Base
 
       unless created_post && creator.errors.blank?
         raise StandardError.new(creator.errors.full_messages.join(" "))
+      else
+        # Log post approval
+        StaffActionLogger.new(approved_by).log_post_approved(created_post)
       end
     end
 
     # Do sidekiq work outside of the transaction
     creator.enqueue_jobs
+    creator.trigger_after_events
 
     DiscourseEvent.trigger(:approved_post, self, created_post)
     created_post
@@ -84,29 +101,29 @@ class QueuedPost < ActiveRecord::Base
 
   private
 
-    def change_to!(state, changed_by)
-      state_val = QueuedPost.states[state]
+  def change_to!(state, changed_by)
+    state_val = QueuedPost.states[state]
 
-      updates = { state: state_val,
-                  "#{state}_by_id" => changed_by.id,
-                  "#{state}_at" => Time.now }
+    updates = { state: state_val,
+                "#{state}_by_id" => changed_by.id,
+                "#{state}_at" => Time.now }
 
-      # We use an update with `row_count` trick here to avoid stampeding requests to
-      # update the same row simultaneously. Only one state change should go through and
-      # we can use the DB to enforce this
-      row_count = QueuedPost.where('id = ? AND state <> ?', id, state_val).update_all(updates)
-      raise InvalidStateTransition.new if row_count == 0
+    # We use an update with `row_count` trick here to avoid stampeding requests to
+    # update the same row simultaneously. Only one state change should go through and
+    # we can use the DB to enforce this
+    row_count = QueuedPost.where('id = ? AND state <> ?', id, state_val).update_all(updates)
+    raise InvalidStateTransition.new if row_count == 0
 
-      if [:rejected, :approved].include?(state)
-        UserAction.where(queued_post_id: id).destroy_all
-      end
-
-      # Update the record in memory too, and clear the dirty flag
-      updates.each { |k, v| send("#{k}=", v) }
-      changes_applied
-
-      QueuedPost.broadcast_new! if visible?
+    if [:rejected, :approved].include?(state)
+      UserAction.where(queued_post_id: id).destroy_all
     end
+
+    # Update the record in memory too, and clear the dirty flag
+    updates.each { |k, v| send("#{k}=", v) }
+    changes_applied
+
+    QueuedPost.broadcast_new! if visible?
+  end
 
 end
 

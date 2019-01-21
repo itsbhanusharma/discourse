@@ -33,56 +33,6 @@ UserOption.where(user_id: -1).update_all(
 
 Group.user_trust_level_change!(-1, TrustLevel[4])
 
-ColumnDropper.drop(
-  table: 'users',
-  after_migration: 'DropEmailFromUsers',
-  columns: %w[
-    email
-    email_always
-    mailing_list_mode
-    email_digests
-    email_direct
-    email_private_messages
-    external_links_in_new_tab
-    enable_quoting
-    dynamic_favicon
-    disable_jump_reply
-    edit_history_public
-    automatically_unpin_topics
-    digest_after_days
-    auto_track_topics_after_msecs
-    new_topic_duration_minutes
-    last_redirected_to_top_at
-    auth_token
-    auth_token_updated_at
-  ],
-  on_drop: ->() {
-    STDERR.puts 'Removing superflous users columns!'
-  }
-)
-
-ColumnDropper.drop(
-  table: 'users',
-  after_migration: 'RenameBlockedSilence',
-  columns: %w[
-    blocked
-  ],
-  on_drop: ->() {
-    STDERR.puts 'Removing user blocked column!'
-  }
-)
-
-ColumnDropper.drop(
-  table: 'users',
-  after_migration: 'AddSilencedTillToUsers',
-  columns: %w[
-    silenced
-  ],
-  on_drop: ->() {
-    STDERR.puts 'Removing user silenced column!'
-  }
-)
-
 # User for the smoke tests
 if ENV["SMOKE"] == "1"
   UserEmail.seed do |ue|

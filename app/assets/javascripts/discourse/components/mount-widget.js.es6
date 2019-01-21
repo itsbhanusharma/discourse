@@ -1,8 +1,8 @@
-import { diff, patch } from 'virtual-dom';
-import { WidgetClickHook } from 'discourse/widgets/hooks';
-import { queryRegistry } from 'discourse/widgets/widget';
-import { getRegister } from 'discourse-common/lib/get-owner';
-import DirtyKeys from 'discourse/lib/dirty-keys';
+import { diff, patch } from "virtual-dom";
+import { WidgetClickHook } from "discourse/widgets/hooks";
+import { queryRegistry } from "discourse/widgets/widget";
+import { getRegister } from "discourse-common/lib/get-owner";
+import DirtyKeys from "discourse/lib/dirty-keys";
 
 const _cleanCallbacks = {};
 export function addWidgetCleanCallback(widgetName, fn) {
@@ -21,14 +21,16 @@ export default Ember.Component.extend({
   dirtyKeys: null,
 
   init() {
-    this._super();
-    const name = this.get('widget');
+    this._super(...arguments);
+    const name = this.get("widget");
 
     this.register = getRegister(this);
 
-    this._widgetClass = queryRegistry(name) || this.register.lookupFactory(`widget:${name}`);
+    this._widgetClass =
+      queryRegistry(name) || this.register.lookupFactory(`widget:${name}`);
 
     if (!this._widgetClass) {
+      // eslint-disable-next-line no-console
       console.error(`Error: Could not find widget: ${name}`);
     }
 
@@ -41,13 +43,13 @@ export default Ember.Component.extend({
   didInsertElement() {
     WidgetClickHook.setupDocumentCallback();
 
-    this._rootNode = document.createElement('div');
+    this._rootNode = document.createElement("div");
     this.element.appendChild(this._rootNode);
-    this._timeout = Ember.run.scheduleOnce('render', this, this.rerenderWidget);
+    this._timeout = Ember.run.scheduleOnce("render", this, this.rerenderWidget);
   },
 
   willClearRender() {
-    const callbacks = _cleanCallbacks[this.get('widget')];
+    const callbacks = _cleanCallbacks[this.get("widget")];
     if (callbacks) {
       callbacks.forEach(cb => cb());
     }
@@ -64,17 +66,14 @@ export default Ember.Component.extend({
     Ember.run.cancel(this._timeout);
   },
 
-  afterRender() {
-  },
+  afterRender() {},
 
-  beforePatch() {
-  },
+  beforePatch() {},
 
-  afterPatch() {
-  },
+  afterPatch() {},
 
   eventDispatched(eventName, key, refreshArg) {
-    const onRefresh = Ember.String.camelize(eventName.replace(/:/, '-'));
+    const onRefresh = Ember.String.camelize(eventName.replace(/:/, "-"));
     this.dirtyKeys.keyDirty(key, { onRefresh, refreshArg });
     this.queueRerender();
   },
@@ -82,7 +81,8 @@ export default Ember.Component.extend({
   dispatch(eventName, key) {
     this._childEvents.push(eventName);
 
-    const caller = refreshArg => this.eventDispatched(eventName, key, refreshArg);
+    const caller = refreshArg =>
+      this.eventDispatched(eventName, key, refreshArg);
     this._dispatched.push([eventName, caller]);
     this.appEvents.on(eventName, caller);
   },
@@ -92,23 +92,24 @@ export default Ember.Component.extend({
       this._renderCallback = callback;
     }
 
-    Ember.run.scheduleOnce('render', this, this.rerenderWidget);
+    Ember.run.scheduleOnce("render", this, this.rerenderWidget);
   },
 
-  buildArgs() {
-  },
+  buildArgs() {},
 
   rerenderWidget() {
     Ember.run.cancel(this._timeout);
 
     if (this._rootNode) {
-      if (!this._widgetClass) { return; }
+      if (!this._widgetClass) {
+        return;
+      }
 
       const t0 = new Date().getTime();
-      const args = this.get('args') || this.buildArgs();
+      const args = this.get("args") || this.buildArgs();
       const opts = {
-        model: this.get('model'),
-        dirtyKeys: this.dirtyKeys,
+        model: this.get("model"),
+        dirtyKeys: this.dirtyKeys
       };
       const newTree = new this._widgetClass(args, this.register, opts);
 
@@ -127,9 +128,10 @@ export default Ember.Component.extend({
         this._renderCallback = null;
       }
       this.afterRender();
-      this.dirtyKeys.renderedKey('*');
+      this.dirtyKeys.renderedKey("*");
 
       if (this.profileWidget) {
+        // eslint-disable-next-line no-console
         console.log(new Date().getTime() - t0);
       }
     }

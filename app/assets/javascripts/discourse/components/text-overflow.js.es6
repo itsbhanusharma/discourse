@@ -1,8 +1,10 @@
 export default Ember.Component.extend({
   didInsertElement() {
-    this._super();
+    this._super(...arguments);
     Ember.run.next(null, () => {
-      this.$().find('hr').remove();
+      this.$()
+        .find("hr")
+        .remove();
       this.$().ellipsis();
     });
   }

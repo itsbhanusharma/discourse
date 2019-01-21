@@ -6,7 +6,13 @@ class UserApiKey < ActiveRecord::Base
     message_bus: [[:post, 'message_bus']],
     push: nil,
     notifications: [[:post, 'message_bus'], [:get, 'notifications#index'], [:put, 'notifications#mark_read']],
-    session_info: [[:get, 'session#current'], [:get, 'users#topic_tracking_state']]
+    session_info: [
+      [:get, 'session#current'],
+      [:get, 'users#topic_tracking_state'],
+      [:get, 'list#unread'],
+      [:get, 'list#new'],
+      [:get, 'list#latest']
+    ]
   }
 
   belongs_to :user
@@ -74,6 +80,7 @@ end
 #  updated_at       :datetime         not null
 #  revoked_at       :datetime
 #  scopes           :text             default([]), not null, is an Array
+#  last_used_at     :datetime         not null
 #
 # Indexes
 #

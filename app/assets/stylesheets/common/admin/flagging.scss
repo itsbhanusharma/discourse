@@ -1,11 +1,13 @@
 .flagged-post.hidden-post {
-  .flagged-post-excerpt, .flagged-post-avatar {
+  .flagged-post-excerpt,
+  .flagged-post-avatar {
     opacity: 0.5;
   }
 }
 
 .flagged-post.deleted {
-  .flagged-post-excerpt, .flagged-post-avatar {
+  .flagged-post-excerpt,
+  .flagged-post-avatar {
     background-color: $danger-low;
   }
 }
@@ -18,8 +20,8 @@
     display: flex;
 
     .flagged-post-avatar {
-      margin-right: 1em;
       position: relative;
+      margin-right: 10px;
 
       img.avatar {
         min-width: 45px;
@@ -39,10 +41,13 @@
     }
 
     .flagged-post-contents {
-      width: 100%;
+      width: calc(100% - 55px);
       word-wrap: break-word;
 
       .flagged-post-user-details {
+        display: flex;
+        justify-content: space-between;
+
         .username {
           font-weight: bold;
           color: $primary;
@@ -60,8 +65,11 @@
       p:last-child {
         margin-bottom: 0;
       }
-      margin-right: 1em;
     }
+  }
+
+  .flagged-post-reply-count {
+    font-weight: normal;
   }
 
   .flag-user-lists {
@@ -99,14 +107,36 @@
     .flag-user-date {
       color: $primary-medium;
     }
-
     .flag-user-avatar {
       margin-right: 0.5em;
+    }
+    .flag-user-extra {
+      display: flex;
+      align-items: center;
+
+      .user-flag-percentage {
+        display: flex;
+        align-items: center;
+        margin-left: 0.5em;
+
+        .percentage-label {
+          margin-right: 0.25em;
+          &.agreed {
+            color: $success;
+          }
+          &.disagreed {
+            color: $danger;
+          }
+          &.ignored {
+            color: $primary-medium;
+          }
+        }
+      }
     }
   }
 
   .flag-conversation {
-    padding: 1em;
+    padding: 1em 0;
 
     .reply-conversation {
       margin-left: 32px;
@@ -161,25 +191,42 @@
   }
 }
 
-.flag-counts {
+div.flag-counts {
   display: inline-block;
   margin-right: 0.5em;
 
   .type-count {
     color: $primary-medium;
-    font-size: 0.9em;
+    font-size: $font-down-1;
   }
 }
 
 .flagged-topic {
   td.topic-title {
     width: 400px;
+
+    .combined-title {
+      .d-icon {
+        margin-right: 0.5em;
+      }
+      display: flex;
+    }
+
     a {
       width: 400px;
-      display: inline-block;
       text-overflow: ellipsis;
       overflow: hidden;
       white-space: nowrap;
+    }
+  }
+  @include breakpoint(tablet) {
+    td.topic-title {
+      width: auto;
+      max-width: 600px;
+      a {
+        width: auto;
+        white-space: unset;
+      }
     }
   }
 }
@@ -187,11 +234,11 @@
 .flagged-topic-details {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 2em;
 }
 
 .mobile-view {
   .flagged-posts {
+    overflow: hidden;
     .flagged-post {
       .flag-user-lists {
         display: block;
@@ -203,5 +250,76 @@
 .show-details {
   .d-icon {
     padding-right: 0.25em;
+  }
+}
+
+.admin-contents table.grid {
+  @media screen and (max-width: 767px) {
+    tr.flagged-topic {
+      grid-template-columns: 0.25fr 1fr 1fr;
+      td.topic-title {
+        grid-column-start: 2;
+        grid-column-end: -2;
+        min-width: 0;
+        align-self: start;
+      }
+      td.last-flagged {
+        grid-row: 1;
+        grid-column-end: -1;
+        text-align: right;
+        align-self: start;
+      }
+      td.flag-details {
+        grid-row: 2;
+        grid-column-end: -1;
+        text-align: right;
+      }
+      td.flagged-topic-users {
+        grid-row: 1;
+        grid-column-start: 1;
+        max-width: 60px;
+        align-self: start;
+        a {
+          display: inline-block;
+          margin: 0 0.25em 0.25em 0;
+        }
+      }
+      td.flag-counts {
+        grid-row: 2;
+        grid-column-start: 2;
+      }
+    }
+  }
+  //IE11 Support
+  @media screen and (max-width: 767px) {
+    tr.flagged-topic {
+      display: -ms-grid;
+      -ms-grid-columns: 0.25fr 1fr 1fr;
+      -ms-grid-rows: auto auto;
+      td {
+        display: -ms-grid;
+        &.flagged-topic-users {
+          -ms-grid-row: 1;
+          -ms-grid-column: 1;
+          -ms-grid-column-span: 1;
+        }
+        &.topic-title {
+          -ms-grid-row: 1;
+          -ms-grid-column: 2;
+        }
+        &.last-flagged {
+          -ms-grid-row: 1;
+          -ms-grid-column: 3;
+        }
+        &.flag-counts {
+          -ms-grid-row: 2;
+          -ms-grid-column: 2;
+        }
+        &.flag-details {
+          -ms-grid-row: 2;
+          -ms-grid-column: 3;
+        }
+      }
+    }
   }
 }

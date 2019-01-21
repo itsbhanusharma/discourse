@@ -21,12 +21,12 @@ export default SingleSelectComponent.extend({
   },
 
   didClickOutside() {
-    if (this.get("isExpanded") === false) { return; }
+    if (!this.get("isExpanded")) return;
     this.close();
   },
 
   didSelect() {
-    this._super();
+    this._super(...arguments);
     this.close();
   }
 });

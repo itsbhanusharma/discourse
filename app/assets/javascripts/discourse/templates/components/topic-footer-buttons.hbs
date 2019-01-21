@@ -4,6 +4,7 @@
       topic=topic
       openUpwards="true"
       toggleMultiSelect=toggleMultiSelect
+      hideMultiSelect=hideMultiSelect
       deleteTopic=deleteTopic
       recoverTopic=recoverTopic
       toggleClosed=toggleClosed
@@ -12,6 +13,7 @@
       showTopicStatusUpdate=showTopicStatusUpdate
       showFeatureTopic=showFeatureTopic
       showChangeTimestamp=showChangeTimestamp
+      resetBumpDate=resetBumpDate
       convertToPublicTopic=convertToPublicTopic
       convertToPrivateMessage=convertToPrivateMessage}}
   {{/if}}
@@ -22,7 +24,7 @@
                                      showInvite=showInvite
                                      showFlagTopic=showFlagTopic}}
     {{else}}
-      {{d-button class=bookmarkClass
+      {{d-button class=(concat "btn-default " bookmarkClass)
                  title=bookmarkTitle
                  label=bookmarkLabel
                  icon="bookmark"
@@ -31,7 +33,7 @@
       {{share-button url=topic.shareUrl}}
 
       {{#if topic.details.can_flag_topic}}
-        {{d-button class="flag-topic"
+        {{d-button class="btn-default flag-topic"
                    title="topic.flag_topic.help"
                    label="topic.flag_topic.title"
                    icon="flag"
@@ -42,7 +44,7 @@
   {{/unless}}
 
   {{#if canInviteTo}}
-    {{d-button class="invite-topic"
+    {{d-button class="btn-default invite-topic"
                title="topic.invite_reply.help"
                label="topic.invite_reply.title"
                icon="users"
@@ -50,16 +52,25 @@
                disabled=inviteDisabled}}
   {{/if}}
 
-  {{#if topic.isPrivateMessage}}
-    {{d-button class="standard"
+  {{#if canArchive}}
+    {{d-button class="btn-default standard archive-topic"
                title=archiveTitle
                label=archiveLabel
                icon=archiveIcon
                action=toggleArchiveMessage}}
   {{/if}}
 
+  {{#if showEditOnFooter}}
+    {{d-button class="btn-default edit-message"
+               title="topic.edit_message.help"
+               label="topic.edit_message.title"
+               icon="pencil"
+               action=editFirstPost}}
+  {{/if}}
+
   {{plugin-outlet name="topic-footer-main-buttons-before-create"
                   args=(hash topic=topic)
+                  tagName=""
                   connectorTagName="span"}}
 
   {{#if topic.details.can_create_post}}
@@ -72,13 +83,17 @@
 
   {{plugin-outlet name="after-topic-footer-main-buttons"
                   args=(hash topic=topic)
+                  tagName=""
                   connectorTagName="span"}}
 
   {{pinned-button pinned=topic.pinned topic=topic}}
 </div>
 
-{{topic-notifications-button notificationLevel=topic.details.notification_level topic=topic}}
+{{#if showNotificationsButton}}
+  {{topic-notifications-button notificationLevel=topic.details.notification_level topic=topic}}
+{{/if}}
 
 {{plugin-outlet name="after-topic-footer-buttons"
                 args=(hash topic=topic)
+                tagName=""
                 connectorTagName="span"}}

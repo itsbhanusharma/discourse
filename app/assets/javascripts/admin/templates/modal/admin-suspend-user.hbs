@@ -8,36 +8,19 @@
             class="suspend-until"
             label="admin.user.suspend_duration"
             includeFarFuture=true
+            clearable=false
             input=suspendUntil}}
         </label>
       </div>
+      {{suspension-details reason=reason message=message}}
 
-      <div class='reason-controls'>
-        <label>
-          <div class='suspend-reason-label'>
-            {{#if siteSettings.hide_suspension_reasons}}
-              {{{i18n 'admin.user.suspend_reason_hidden_label'}}}
-            {{else}}
-              {{{i18n 'admin.user.suspend_reason_label'}}}
-            {{/if}}
-          </div>
+      {{#if post}}
+        {{penalty-post-action
+          post=post
+          postAction=postAction
+          postEdit=postEdit}}
+      {{/if}}
 
-          {{text-field
-            value=reason
-            class="suspend-reason"
-            placeholderKey="admin.user.suspend_reason_placeholder"}}
-        </label>
-      </div>
-
-      <label>
-        <div class='suspend-message-label'>
-          {{i18n "admin.user.suspend_message"}}
-        </div>
-        {{textarea
-          value=message
-          class="suspend-message"
-          placeholder=(i18n "admin.user.suspend_message_placeholder")}}
-      </label>
     {{else}}
       <div class='cant-suspend'>
         {{i18n "admin.user.cant_suspend"}}
@@ -51,10 +34,10 @@
 <div class="modal-footer">
   {{d-button
     class="btn-danger perform-suspend"
-    action="suspend"
+    action=(action "suspend")
     disabled=submitDisabled
     icon="ban"
     label="admin.user.suspend"}}
-  {{d-modal-cancel close=(action "closeModal")}}
+  {{d-modal-cancel close=(route-action "closeModal")}}
   {{conditional-loading-spinner condition=loading size="small"}}
 </div>

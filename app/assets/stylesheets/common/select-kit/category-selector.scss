@@ -1,9 +1,13 @@
-.select-kit, .select-kit-box {
-  .selected-name  {
-    .badge-wrapper {
-      display: inline-flex;
-      align-items: center;
-      line-height: inherit;
+.select-kit,
+.select-kit-box {
+  &.category-selector {
+    .selected-name {
+      .badge-wrapper {
+        &.box {
+          margin: 2px;
+          padding: 0;
+        }
+      }
     }
   }
 }

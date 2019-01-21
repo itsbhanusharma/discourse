@@ -14,16 +14,16 @@ class UploadCreator
 
   # Available options
   #  - type (string)
-  #  - content_type (string)
   #  - origin (string)
   #  - for_group_message (boolean)
   #  - for_theme (boolean)
   #  - for_private_message (boolean)
   #  - pasted (boolean)
+  #  - for_export (boolean)
   def initialize(file, filename, opts = {})
-    @upload = Upload.new
     @file = file
-    @filename = filename
+    @filename = (filename || "").gsub(/[^[:print:]]/, "")
+    @upload = Upload.new(original_filename: @filename, filesize: 0)
     @opts = opts
   end
 
@@ -34,13 +34,19 @@ class UploadCreator
     end
 
     DistributedMutex.synchronize("upload_#{user_id}_#{@filename}") do
-      if FileHelper.is_image?(@filename)
+      # test for image regardless of input
+      @image_info = FastImage.new(@file) rescue nil
+
+      is_image = FileHelper.is_supported_image?(@filename)
+      is_image ||= @image_info && FileHelper.is_supported_image?("test.#{@image_info.type}")
+
+      if is_image
         extract_image_info!
         return @upload if @upload.errors.present?
 
-        if @filename[/\.svg$/i]
+        if @image_info.type.to_s == "svg"
           whitelist_svg!
-        elsif !Rails.env.test?
+        elsif !Rails.env.test? || @opts[:force_optimize]
           convert_to_jpeg! if should_convert_to_jpeg?
           downsize!        if should_downsize?
 
@@ -50,6 +56,9 @@ class UploadCreator
           crop!            if should_crop?
           optimize!        if should_optimize?
         end
+
+        # conversion may have switched the type
+        image_type = @image_info.type.to_s
       end
 
       # compute the sha of the file
@@ -65,47 +74,73 @@ class UploadCreator
       end
 
       # return the previous upload if any
-      return @upload unless @upload.nil?
+      if @upload
+        UserUpload.find_or_create_by!(user_id: user_id, upload_id: @upload.id) if user_id
+        return @upload
+      end
+
+      fixed_original_filename = nil
+
+      if is_image
+        current_extension = File.extname(@filename).downcase.sub("jpeg", "jpg")
+        expected_extension = ".#{image_type}".downcase.sub("jpeg", "jpg")
+
+        # we have to correct original filename here, no choice
+        # otherwise validation will fail and we can not save
+        # TODO decide if we only run the validation on the extension
+        if current_extension != expected_extension
+          basename = File.basename(@filename, current_extension).presence || "image"
+          fixed_original_filename = "#{basename}#{expected_extension}"
+        end
+      end
 
       # create the upload otherwise
       @upload = Upload.new
       @upload.user_id           = user_id
-      @upload.original_filename = @filename
+      @upload.original_filename = fixed_original_filename || @filename
       @upload.filesize          = filesize
       @upload.sha1              = sha1
       @upload.url               = ""
       @upload.origin            = @opts[:origin][0...1000] if @opts[:origin]
-      @upload.extension         = File.extname(@filename)[1..10]
+      @upload.extension         = image_type || File.extname(@filename)[1..10]
 
-      if FileHelper.is_image?(@filename)
-        @upload.width, @upload.height = ImageSizer.resize(*@image_info.size)
+      if is_image
+        @upload.thumbnail_width, @upload.thumbnail_height = ImageSizer.resize(*@image_info.size)
+        @upload.width, @upload.height = @image_info.size
       end
 
       @upload.for_private_message = true if @opts[:for_private_message]
       @upload.for_group_message   = true if @opts[:for_group_message]
       @upload.for_theme           = true if @opts[:for_theme]
+      @upload.for_export          = true if @opts[:for_export]
+      @upload.for_site_setting    = true if @opts[:for_site_setting]
 
       return @upload unless @upload.save
 
       # store the file and update its url
       File.open(@file.path) do |f|
-        url = Discourse.store.store_upload(f, @upload, @opts[:content_type])
+        url = Discourse.store.store_upload(f, @upload)
+
         if url.present?
           @upload.url = url
-          @upload.save
+          @upload.save!
         else
           @upload.errors.add(:url, I18n.t("upload.store_failure", upload_id: @upload.id, user_id: user_id))
         end
       end
 
-      if @upload.errors.empty? && FileHelper.is_image?(@filename) && @opts[:type] == "avatar"
+      if @upload.errors.empty? && is_image && @opts[:type] == "avatar" && @upload.extension != "svg"
         Jobs.enqueue(:create_avatar_thumbnails, upload_id: @upload.id, user_id: user_id)
+      end
+
+      if @upload.errors.empty?
+        UserUpload.find_or_create_by!(user_id: user_id, upload_id: @upload.id) if user_id
       end
 
       @upload
     end
   ensure
-    @file.close! rescue nil
+    @file&.close
   end
 
   def extract_image_info!
@@ -130,29 +165,56 @@ class UploadCreator
     pixels > MIN_PIXELS_TO_CONVERT_TO_JPEG
   end
 
+  MIN_CONVERT_TO_JPEG_BYTES_SAVED = 75_000
+  MIN_CONVERT_TO_JPEG_SAVING_RATIO = 0.70
+
   def convert_to_jpeg!
+    return if filesize < MIN_CONVERT_TO_JPEG_BYTES_SAVED
+
     jpeg_tempfile = Tempfile.new(["image", ".jpg"])
 
-    OptimizedImage.ensure_safe_paths!(@file.path, jpeg_tempfile.path)
-    Discourse::Utils.execute_command(
-      'convert', @file.path,
-      '-auto-orient',
-      '-background', 'white',
-      '-interlace', 'none',
-      '-flatten',
-      '-quality', SiteSetting.png_to_jpg_quality.to_s,
-      jpeg_tempfile.path
-    )
+    from = @file.path
+    to = jpeg_tempfile.path
 
-    # keep the JPEG if it's at least 15% smaller
-    if File.size(jpeg_tempfile.path) < filesize * 0.85
+    OptimizedImage.ensure_safe_paths!(from, to)
+
+    from = OptimizedImage.prepend_decoder!(from, nil, filename: "image.#{@image_info.type}")
+    to = OptimizedImage.prepend_decoder!(to)
+
+    begin
+      execute_convert(from, to)
+    rescue
+      # retry with debugging enabled
+      execute_convert(from, to, true)
+    end
+
+    new_size = File.size(jpeg_tempfile.path)
+
+    keep_jpeg = new_size < filesize * MIN_CONVERT_TO_JPEG_SAVING_RATIO
+    keep_jpeg &&= (filesize - new_size) > MIN_CONVERT_TO_JPEG_BYTES_SAVED
+
+    if keep_jpeg
       @file = jpeg_tempfile
-      @filename = (File.basename(@filename, ".*").presence || I18n.t("image").presence || "image") + ".jpg"
-      @opts[:content_type] = "image/jpeg"
       extract_image_info!
     else
-      jpeg_tempfile.close! rescue nil
+      jpeg_tempfile&.close
     end
+  end
+
+  def execute_convert(from, to, debug = false)
+    command = [
+      "convert",
+      from,
+      "-auto-orient",
+      "-background", "white",
+      "-interlace", "none",
+      "-flatten",
+      "-quality", SiteSetting.png_to_jpg_quality.to_s
+    ]
+    command << "-debug" << "all" if debug
+    command << to
+
+    Discourse::Utils.execute_command(*command, failure_message: I18n.t("upload.png_to_jpg_conversion_failure_message"))
   end
 
   def should_downsize?
@@ -163,8 +225,18 @@ class UploadCreator
     3.times do
       original_size = filesize
       downsized_pixels = [pixels, max_image_pixels].min / 2
-      OptimizedImage.downsize(@file.path, @file.path, "#{downsized_pixels}@", filename: @filename, allow_animation: allow_animation)
+
+      OptimizedImage.downsize(
+        @file.path,
+        @file.path,
+        "#{downsized_pixels}@",
+        filename: @filename,
+        allow_animation: allow_animation,
+        raise_on_error: true
+      )
+
       extract_image_info!
+
       return if filesize >= original_size || pixels == 0 || !should_downsize?
     end
   end
@@ -195,8 +267,13 @@ class UploadCreator
   end
 
   def fix_orientation!
-    OptimizedImage.ensure_safe_paths!(@file.path)
-    Discourse::Utils.execute_command('convert', @file.path, '-auto-orient', @file.path)
+    path = @file.path
+
+    OptimizedImage.ensure_safe_paths!(path)
+    path = OptimizedImage.prepend_decoder!(path, nil, filename: "image.#{@image_info.type}")
+
+    Discourse::Utils.execute_command('convert', path, '-auto-orient', path)
+
     extract_image_info!
   end
 
@@ -206,21 +283,22 @@ class UploadCreator
 
   def crop!
     max_pixel_ratio = Discourse::PIXEL_RATIOS.max
+    filename_with_correct_ext = "image.#{@image_info.type}"
 
     case @opts[:type]
     when "avatar"
       width = height = Discourse.avatar_sizes.max
-      OptimizedImage.resize(@file.path, @file.path, width, height, filename: @filename, allow_animation: allow_animation)
+      OptimizedImage.resize(@file.path, @file.path, width, height, filename: filename_with_correct_ext, allow_animation: allow_animation)
     when "profile_background"
       max_width = 850 * max_pixel_ratio
       width, height = ImageSizer.resize(@image_info.size[0], @image_info.size[1], max_width: max_width, max_height: max_width)
-      OptimizedImage.downsize(@file.path, @file.path, "#{width}x#{height}\\>", filename: @filename, allow_animation: allow_animation)
+      OptimizedImage.downsize(@file.path, @file.path, "#{width}x#{height}\>", filename: filename_with_correct_ext, allow_animation: allow_animation)
     when "card_background"
       max_width = 590 * max_pixel_ratio
       width, height = ImageSizer.resize(@image_info.size[0], @image_info.size[1], max_width: max_width, max_height: max_width)
-      OptimizedImage.downsize(@file.path, @file.path, "#{width}x#{height}\\>", filename: @filename, allow_animation: allow_animation)
+      OptimizedImage.downsize(@file.path, @file.path, "#{width}x#{height}\>", filename: filename_with_correct_ext, allow_animation: allow_animation)
     when "custom_emoji"
-      OptimizedImage.downsize(@file.path, @file.path, "100x100\\>", filename: @filename, allow_animation: allow_animation)
+      OptimizedImage.downsize(@file.path, @file.path, "100x100\>", filename: filename_with_correct_ext, allow_animation: allow_animation)
     end
 
     extract_image_info!
@@ -240,7 +318,7 @@ class UploadCreator
     OptimizedImage.ensure_safe_paths!(@file.path)
     FileHelper.optimize_image!(@file.path)
     extract_image_info!
-  rescue ImageOptim::Worker::TimeoutExceeded
+  rescue ImageOptim::TimeoutExceeded
     Rails.logger.warn("ImageOptim timed out while optimizing #{@filename}")
   end
 

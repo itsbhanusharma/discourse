@@ -27,7 +27,7 @@ class DiscourseRedis
             thread = Thread.new { initiate_fallback_to_master }
             thread.join
             break if synchronize { @master }
-            sleep 10
+            sleep 5
           ensure
             thread.kill
           end
@@ -201,6 +201,31 @@ class DiscourseRedis
     end
   end
 
+  def scan_each(options = {}, &block)
+    DiscourseRedis.ignore_readonly do
+      match = options[:match].presence || '*'
+
+      options[:match] =
+        if @namespace
+          "#{namespace}:#{match}"
+        else
+          match
+        end
+
+      if block
+        @redis.scan_each(options) do |key|
+          key = remove_namespace(key) if @namespace
+          block.call(key)
+        end
+      else
+        @redis.scan_each(options).map do |key|
+          key = remove_namespace(key) if @namespace
+          key
+        end
+      end
+    end
+  end
+
   def keys(pattern = nil)
     DiscourseRedis.ignore_readonly do
       pattern = pattern || '*'
@@ -229,7 +254,7 @@ class DiscourseRedis
   end
 
   def reconnect
-    @redis.client.reconnect
+    @redis._client.reconnect
   end
 
   def namespace_key(key)
@@ -251,6 +276,12 @@ class DiscourseRedis
 
   def self.new_redis_store
     Cache.new
+  end
+
+  private
+
+  def remove_namespace(key)
+    key[(namespace.length + 1)..-1]
   end
 
 end

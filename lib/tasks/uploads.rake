@@ -1,12 +1,12 @@
+require "db_helper"
 require "digest/sha1"
+require "base62"
 
 ################################################################################
 #                                    gather                                    #
 ################################################################################
 
 task "uploads:gather" => :environment do
-  require "db_helper"
-
   ENV["RAILS_DB"] ? gather_uploads : gather_uploads_for_all_sites
 end
 
@@ -84,8 +84,6 @@ end
 ################################################################################
 
 task "uploads:migrate_from_s3" => :environment do
-  require "db_helper"
-
   ENV["RAILS_DB"] ? migrate_from_s3 : migrate_all_from_s3
 end
 
@@ -114,14 +112,8 @@ def migrate_from_s3
   require "file_store/s3_store"
 
   # make sure S3 is disabled
-  if SiteSetting.Uploads.enable_s3_uploads
+  if SiteSetting.Upload.enable_s3_uploads
     puts "You must disable S3 uploads before running that task."
-    return
-  end
-
-  # make sure S3 bucket is set
-  if SiteSetting.Upload.s3_upload_bucket.blank?
-    puts "The S3 upload bucket must be set before running that task."
     return
   end
 
@@ -129,41 +121,77 @@ def migrate_from_s3
 
   puts "Migrating uploads from S3 to local storage for '#{db}'..."
 
-  s3_base_url = FileStore::S3Store.new.absolute_base_url
-  max_file_size_kb = [SiteSetting.max_image_size_kb, SiteSetting.max_attachment_size_kb].max.kilobytes
+  max_file_size = [SiteSetting.max_image_size_kb, SiteSetting.max_attachment_size_kb].max.kilobytes
 
-  Post.unscoped.find_each do |post|
-    if post.raw[s3_base_url]
-      post.raw.scan(/(#{Regexp.escape(s3_base_url)}\/(\d+)(\h{40})\.\w+)/).each do |url, id, sha|
+  Post
+    .where("user_id > 0")
+    .where("raw LIKE '%.s3%.amazonaws.com/%' OR raw LIKE '%(upload://%'")
+    .find_each do |post|
+    begin
+      updated = false
+
+      post.raw.gsub!(/(\/\/[\w.-]+amazonaws\.com\/(original|optimized)\/([a-z0-9]+\/)+\h{40}([\w.-]+)?)/i) do |url|
         begin
-          puts "POST ID: #{post.id}"
-          puts "UPLOAD ID: #{id}"
-          puts "UPLOAD SHA: #{sha}"
-          puts "UPLOAD URL: #{url}"
           if filename = guess_filename(url, post.raw)
-            puts "FILENAME: #{filename}"
-            file = FileHelper.download(
-              "http:#{url}",
-              max_file_size: 20.megabytes,
-              tmp_file_name: "from_s3",
-              follow_redirect: true
-            )
-            if upload = UploadCreator.new(file, filename).create_for(post.user_id || -1)
-              post.raw = post.raw.gsub(/(https?:)?#{Regexp.escape(url)}/, upload.url)
-              post.save
-              post.rebake!
-              puts "OK :)"
-            else
-              puts "KO :("
+            file = FileHelper.download("http:#{url}", max_file_size: max_file_size, tmp_file_name: "from_s3", follow_redirect: true)
+            sha1 = Upload.generate_digest(file)
+            origin = nil
+
+            existing_upload = Upload.find_by(sha1: sha1)
+            if existing_upload&.url&.start_with?("//")
+              filename = existing_upload.original_filename
+              origin = existing_upload.origin
+              existing_upload.destroy
             end
-            puts post.full_url, ""
-          else
-            puts "NO FILENAME :("
+
+            new_upload = UploadCreator.new(file, filename, origin: origin).create_for(post.user_id || -1)
+            if new_upload&.save
+              updated = true
+              url = new_upload.url
+            end
           end
-        rescue => e
-          puts "EXCEPTION: #{e.message}"
+
+          url
+        rescue
+          url
         end
       end
+
+      post.raw.gsub!(/(upload:\/\/[0-9a-zA-Z]+\.\w+)/) do |url|
+        begin
+          if sha1 = Upload.sha1_from_short_url(url)
+            if upload = Upload.find_by(sha1: sha1)
+              if upload.url.start_with?("//")
+                file = FileHelper.download("http:#{upload.url}", max_file_size: max_file_size, tmp_file_name: "from_s3", follow_redirect: true)
+                filename = upload.original_filename
+                origin = upload.origin
+                upload.destroy
+
+                new_upload = UploadCreator.new(file, filename, origin: origin).create_for(post.user_id || -1)
+                if new_upload&.save
+                  updated = true
+                  url = new_upload.url
+                end
+              end
+            end
+          end
+
+          url
+        rescue
+          url
+        end
+      end
+
+      if updated
+        post.save!
+        post.rebake!
+        putc "#"
+      else
+        putc "."
+      end
+
+    rescue
+      putc "X"
     end
   end
 
@@ -175,10 +203,6 @@ end
 ################################################################################
 
 task "uploads:migrate_to_s3" => :environment do
-  require "file_store/s3_store"
-  require "file_store/local_store"
-  require "db_helper"
-
   ENV["RAILS_DB"] ? migrate_to_s3 : migrate_to_s3_all_sites
 end
 
@@ -187,67 +211,190 @@ def migrate_to_s3_all_sites
 end
 
 def migrate_to_s3
-  # make sure s3 is enabled
-  if !SiteSetting.Upload.enable_s3_uploads
-    puts "You must enable s3 uploads before running that task"
-    return
-  end
-
   db = RailsMultisite::ConnectionManagement.current_db
 
-  puts "Migrating uploads to S3 (#{SiteSetting.Upload.s3_upload_bucket}) for '#{db}'..."
+  dry_run = !!ENV["DRY_RUN"]
 
-  # will throw an exception if the bucket is missing
-  s3 = FileStore::S3Store.new
-  local = FileStore::LocalStore.new
+  puts "*" * 30 + " DRY RUN " + "*" * 30 if dry_run
+  puts "Migrating uploads to S3 for '#{db}'..."
 
-  # Migrate all uploads
-  Upload.where.not(sha1: nil)
-    .where("url NOT LIKE '#{s3.absolute_base_url}%'")
-    .find_each do |upload|
-    # remove invalid uploads
-    if upload.url.blank?
-      upload.destroy!
-      next
-    end
-    # store the old url
-    from = upload.url
-    # retrieve the path to the local file
-    path = local.path_for(upload)
-    # make sure the file exists locally
-    if !path || !File.exists?(path)
-      putc "X"
-      next
-    end
+  if Upload.where("url NOT LIKE '//%' AND url NOT LIKE '/uploads/#{db}/original/_X/%'").exists?
+    puts <<~TEXT
+      Some uploads were not migrated to the new scheme. Please run these commands in the rails console
 
-    begin
-      file = File.open(path)
-      content_type = `file --mime-type -b #{path}`.strip
-      to = s3.store_upload(file, upload, content_type)
-    rescue
-      putc "X"
-      next
-    ensure
-      file.try(:close!) rescue nil
-    end
-
-    # remap the URL
-    DbHelper.remap(from, to)
-
-    putc "."
+      SiteSetting.migrate_to_new_scheme = true
+      Jobs::MigrateUploadScheme.new.execute(nil)
+    TEXT
+    exit 1
   end
+
+  unless GlobalSetting.use_s3?
+    puts <<~TEXT
+      Please provide the following environment variables
+        - DISCOURSE_S3_BUCKET
+        - DISCOURSE_S3_REGION
+        - DISCOURSE_S3_ACCESS_KEY_ID
+        - DISCOURSE_S3_SECRET_ACCESS_KEY
+    TEXT
+    exit 2
+  end
+
+  if SiteSetting.Upload.s3_cdn_url.blank?
+    puts "Please provide the 'DISCOURSE_S3_CDN_URL' environment variable"
+    exit 3
+  end
+
+  bucket_has_folder_path = true if ENV["DISCOURSE_S3_BUCKET"].include? "/"
+
+  s3 = Aws::S3::Client.new(
+    region: ENV["DISCOURSE_S3_REGION"],
+    access_key_id: ENV["DISCOURSE_S3_ACCESS_KEY_ID"],
+    secret_access_key: ENV["DISCOURSE_S3_SECRET_ACCESS_KEY"])
+
+  if bucket_has_folder_path
+    bucket, folder = S3Helper.get_bucket_and_folder_path(ENV["DISCOURSE_S3_BUCKET"])
+    folder = File.join(folder, "/")
+  else
+    bucket, folder = ENV["DISCOURSE_S3_BUCKET"], ""
+  end
+
+  begin
+    s3.head_bucket(bucket: bucket)
+  rescue Aws::S3::Errors::NotFound
+    puts "Bucket '#{bucket}' not found. Creating it..."
+    s3.create_bucket(bucket: bucket) unless dry_run
+  end
+
+  puts "Uploading files to S3..."
+  print " - Listing local files"
+
+  local_files = []
+  IO.popen("cd public && find uploads/#{db}/original -type f").each do |file|
+    local_files << file.chomp
+    putc "." if local_files.size % 1000 == 0
+  end
+
+  puts " => #{local_files.size} files"
+  print " - Listing S3 files"
+
+  s3_objects = []
+  prefix = Rails.configuration.multisite ? "#{db}/original/" : "original/"
+  options = { bucket: bucket, prefix: folder + prefix }
+
+  loop do
+    response = s3.list_objects_v2(options)
+    s3_objects.concat(response.contents)
+    putc "."
+    break if response.next_continuation_token.blank?
+    options[:continuation_token] = response.next_continuation_token
+  end
+
+  puts " => #{s3_objects.size} files"
+  puts " - Syncing files to S3"
+
+  synced = 0
+  failed = []
+
+  local_files.each do |file|
+    path = File.join("public", file)
+    name = File.basename(path)
+    etag = Digest::MD5.file(path).hexdigest
+    key = file[file.index(prefix)..-1]
+    key.prepend(folder) if bucket_has_folder_path
+
+    if s3_object = s3_objects.find { |obj| file.ends_with?(obj.key) }
+      next if File.size(path) == s3_object.size && s3_object.etag[etag]
+    end
+
+    options = {
+      acl: "public-read",
+      body: File.open(path, "rb"),
+      bucket: bucket,
+      content_type: MiniMime.lookup_by_filename(name)&.content_type,
+      key: key,
+    }
+
+    if !FileHelper.is_supported_image?(name)
+      options[:content_disposition] = %Q{attachment; filename="#{name}"}
+    end
+
+    if dry_run
+      puts "#{file} => #{options[:key]}"
+      synced += 1
+    elsif s3.put_object(options).etag[etag]
+      putc "."
+      synced += 1
+    else
+      putc "X"
+      failed << path
+    end
+  end
+
+  puts
+
+  if failed.size > 0
+    puts "Failed to upload #{failed.size} files"
+    puts failed.join("\n")
+  elsif s3_objects.size + synced >= local_files.size
+    puts "Updating the URLs in the database..."
+
+    excluded_tables = %w{
+      email_logs
+      incoming_emails
+      notifications
+      post_search_data
+      search_logs
+      stylesheet_cache
+      user_auth_token_logs
+      user_auth_tokens
+      web_hooks_events
+    }
+
+    from = "/uploads/#{db}/original/(\\dX/(?:[a-f0-9]/)*[a-f0-9]{40}[a-z0-9\\.]*)"
+    to = "#{SiteSetting.Upload.s3_base_url}/#{prefix}\\1"
+
+    if dry_run
+      puts "REPLACING '#{from}' WITH '#{to}'"
+    else
+      DbHelper.regexp_replace(from, to, excluded_tables: excluded_tables)
+    end
+
+    # Uploads that were on base hostname will now be on S3 CDN
+    from = "#{Discourse.base_url}#{SiteSetting.Upload.s3_base_url}"
+    to = SiteSetting.Upload.s3_cdn_url
+
+    if dry_run
+      puts "REMAPPING '#{from}' TO '#{to}'"
+    else
+      DbHelper.remap(from, to, excluded_tables: excluded_tables)
+    end
+
+    if Discourse.asset_host.present?
+      # Uploads that were on local CDN will now be on S3 CDN
+      from = "#{Discourse.asset_host}#{SiteSetting.Upload.s3_base_url}"
+      to = SiteSetting.Upload.s3_cdn_url
+
+      if dry_run
+        puts "REMAPPING '#{from}' TO '#{to}'"
+      else
+        DbHelper.remap(from, to, excluded_tables: excluded_tables)
+      end
+    end
+  end
+
+  puts "Done!"
 end
 
 ################################################################################
-#                                  clean_up                                   #
+#                                  clean_up                                    #
 ################################################################################
 
 task "uploads:clean_up" => :environment do
-  if ENV["RAILS_DB"]
-    clean_up_uploads
-  else
-    RailsMultisite::ConnectionManagement.each_connection { clean_up_uploads }
-  end
+  ENV["RAILS_DB"] ? clean_up_uploads : clean_up_uploads_all_sites
+end
+
+def clean_up_uploads_all_sites
+  RailsMultisite::ConnectionManagement.each_connection { clean_up_uploads }
 end
 
 def clean_up_uploads
@@ -342,52 +489,16 @@ end
 # list all missing uploads and optimized images
 task "uploads:missing" => :environment do
   if ENV["RAILS_DB"]
-    list_missing_uploads
+    list_missing_uploads(skip_optimized: ENV['SKIP_OPTIMIZED'])
   else
     RailsMultisite::ConnectionManagement.each_connection do |db|
-      list_missing_uploads
+      list_missing_uploads(skip_optimized: ENV['SKIP_OPTIMIZED'])
     end
   end
 end
 
-def list_missing_uploads
-  if Discourse.store.external?
-    puts "This task only works for internal storages."
-    return
-  end
-
-  public_directory = "#{Rails.root}/public"
-
-  Upload.find_each do |upload|
-
-    # could be a remote image
-    next unless upload.url =~ /^\/[^\/]/
-
-    path = "#{public_directory}#{upload.url}"
-    bad = true
-    begin
-      bad = false if File.size(path) != 0
-    rescue
-      # something is messed up
-    end
-    puts path if bad
-  end
-
-  OptimizedImage.find_each do |optimized_image|
-
-    # remote?
-    next unless optimized_image.url =~ /^\/[^\/]/
-
-    path = "#{public_directory}#{optimized_image.url}"
-
-    bad = true
-    begin
-      bad = false if File.size(path) != 0
-    rescue
-      # something is messed up
-    end
-    puts path if bad
-  end
+def list_missing_uploads(skip_optimized: false)
+  Discourse.store.list_missing_uploads(skip_optimized: skip_optimized)
 end
 
 ################################################################################
@@ -409,56 +520,80 @@ def recover_from_tombstone
   end
 
   begin
-    original_setting = SiteSetting.max_image_size_kb
-    SiteSetting.max_image_size_kb = 10240
-    current_db = RailsMultisite::ConnectionManagement.current_db
+    previous_image_size      = SiteSetting.max_image_size_kb
+    previous_attachment_size = SiteSetting.max_attachment_size_kb
+    previous_extensions      = SiteSetting.authorized_extensions
 
+    SiteSetting.max_image_size_kb      = 10 * 1024
+    SiteSetting.max_attachment_size_kb = 10 * 1024
+    SiteSetting.authorized_extensions  = "*"
+
+    current_db = RailsMultisite::ConnectionManagement.current_db
     public_path = Rails.root.join("public")
     paths = Dir.glob(File.join(public_path, 'uploads', 'tombstone', current_db, '**', '*.*'))
-    max = paths.length
+    max = paths.size
 
     paths.each_with_index do |path, index|
       filename = File.basename(path)
       printf("%9d / %d (%5.1f%%)\n", (index + 1), max, (((index + 1).to_f / max.to_f) * 100).round(1))
 
-      Post.where("raw LIKE ?", "%#{filename}%").each do |post|
+      Post.where("raw LIKE ?", "%#{filename}%").find_each do |post|
         doc = Nokogiri::HTML::fragment(post.raw)
         updated = false
 
-        doc.css("img[src]").each do |img|
-          url = img["src"]
+        image_urls = doc.css("img[src]").map { |img| img["src"] }
+        attachment_urls = doc.css("a.attachment[href]").map { |a| a["href"] }
 
-          next unless url =~ /^\/uploads\//
+        (image_urls + attachment_urls).each do |url|
+          next if !url.start_with?("/uploads/")
+          next if Upload.exists?(url: url)
 
-          upload = Upload.find_by(url: url)
+          puts "Restoring #{path}..."
+          tombstone_path = File.join(public_path, 'uploads', 'tombstone', url.gsub(/^\/uploads\//, ""))
 
-          if !upload && url
-            printf "Restoring #{path}..."
-            tombstone_path = File.join(public_path, 'uploads', 'tombstone', url.gsub(/^\/uploads\//, ""))
+          if File.exists?(tombstone_path)
+            File.open(tombstone_path) do |file|
+              new_upload = UploadCreator.new(file, File.basename(url)).create_for(Discourse::SYSTEM_USER_ID)
 
-            if File.exists?(tombstone_path)
-              File.open(tombstone_path) do |file|
-                new_upload = UploadCreator.new(file, File.basename(url)).create_for(Discourse::SYSTEM_USER_ID)
-
-                if new_upload.persisted?
-                  printf "Restored into #{new_upload.url}\n"
-                  DbHelper.remap(url, new_upload.url)
-                  updated = true
-                else
-                  puts "Failed to create upload for #{url}: #{new_upload.errors.full_messages}."
-                end
+              if new_upload.persisted?
+                puts "Restored into #{new_upload.url}"
+                DbHelper.remap(url, new_upload.url)
+                updated = true
+              else
+                puts "Failed to create upload for #{url}: #{new_upload.errors.full_messages}."
               end
-            else
-              puts "Failed to find file (#{tombstone_path}) in tombstone."
             end
+          else
+            puts "Failed to find file (#{tombstone_path}) in tombstone."
           end
         end
 
         post.rebake! if updated
       end
+
+      sha1 = File.basename(filename, File.extname(filename))
+      short_url = "upload://#{Base62.encode(sha1.hex)}"
+
+      Post.where("raw LIKE ?", "%#{short_url}%").find_each do |post|
+        puts "Restoring #{path}..."
+
+        File.open(path) do |file|
+          new_upload = UploadCreator.new(file, filename).create_for(Discourse::SYSTEM_USER_ID)
+
+          if new_upload.persisted?
+            puts "Restored into #{new_upload.short_url}"
+            DbHelper.remap(short_url, new_upload.short_url) if short_url != new_upload.short_url
+            post.rebake!
+          else
+            puts "Failed to create upload for #{filename}: #{new_upload.errors.full_messages}."
+          end
+        end
+      end
     end
   ensure
-    SiteSetting.max_image_size_kb = original_setting
+    SiteSetting.max_image_size_kb      = previous_image_size
+    SiteSetting.max_attachment_size_kb = previous_attachment_size
+    SiteSetting.authorized_extensions  = previous_extensions
   end
 end
 
@@ -652,11 +787,30 @@ task "uploads:analyze", [:cache_path, :limit] => :environment do |_, args|
   printf "%-25s | %-25s | %-25s | %-25s\n", 'username', 'total size of uploads', 'number of uploads', 'number of optimized images'
   puts "-" * 110
 
-  User.exec_sql(sql).values.each do |username, num_of_uploads, total_size_of_uploads, num_of_optimized_images|
+  DB.query_single(sql).each do |username, num_of_uploads, total_size_of_uploads, num_of_optimized_images|
     printf "%-25s | %-25s | %-25s | %-25s\n", username, helper.number_to_human_size(total_size_of_uploads), num_of_uploads, num_of_optimized_images
   end
 
   puts "\n"
   puts "List of file paths @ #{path}"
   puts "Duration: #{Time.zone.now - now} seconds"
+end
+
+task "uploads:fix_incorrect_extensions" => :environment do
+  require_dependency "upload_fixer"
+  UploadFixer.fix_all_extensions
+end
+
+task "uploads:recover" => :environment do
+  require_dependency "upload_recovery"
+
+  dry_run = ENV["DRY_RUN"].present?
+
+  if ENV["RAILS_DB"]
+    UploadRecovery.new(dry_run: dry_run).recover
+  else
+    RailsMultisite::ConnectionManagement.each_connection do |db|
+      UploadRecovery.new(dry_run: dry_run).recover
+    end
+  end
 end

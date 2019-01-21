@@ -2,56 +2,73 @@
 // Discourse header
 // --------------------------------------------------
 
-@media only screen and (max-width: 320px) {
-  #site-text-logo {
-    font-size: 18px;
-  }
-}
-
 .d-header {
-
-  #site-logo {
-    max-width: 130px;
-  }
+  height: 3.66em;
 
   // some protection for text-only site titles
   .title {
-    max-width: 50%;
-    height: 39px;
+    max-width: 75%;
+    white-space: nowrap;
     overflow: hidden;
-    padding: 0;
-    text-overflow: clip;
-    display: table;
+    text-overflow: ellipsis;
+    -webkit-animation: fadein 0.5s;
+    animation: fadein 0.5s;
     a {
-      display: table-cell;
-      vertical-align: middle;
+      display: block;
+      width: 100%;
     }
   }
 
+  #site-logo {
+    max-height: 2.4em;
+    max-width: 100%;
+  }
+  #site-text-logo {
+    margin: 0;
+    font-size: $font-up-1;
+  }
+  .extra-info-wrapper {
+    .extra-info {
+      // header title should not be centered if there's no tags / categories
+      &:not(.two-rows) {
+        min-height: 2.25em;
+      }
+      h1 {
+        font-size: $font-0;
+      }
+      .private-message-glyph-wrapper {
+        float: left;
+      }
+    }
+  }
   button.sign-up-button {
-    display:none;
+    display: none;
+  }
+  // styles for mobile scroll logo / topic
+  .panel {
+    -webkit-animation: fadein 0.5s;
+    animation: fadein 0.5s;
+  }
+  &.scroll-down .panel {
+    display: none;
   }
 }
 
 .d-header-icons {
-  .badge-notification {
-    top: -5px;
-    color: $secondary;
+  .d-icon {
+    line-height: $line-height-medium;
   }
-
   .active .icon {
-    &:after { margin-top: -1px; }
+    &:after {
+      margin-top: -1px;
+    }
   }
 }
 
 #main-outlet {
-  padding-top: 60px;
+  padding-top: 4.2857em;
 }
 
 .search-link .badge-category {
   display: none;
-}
-
-.search-link .topic-statuses .topic-status i {
-  font-size: 1em;
 }

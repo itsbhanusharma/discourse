@@ -7,17 +7,24 @@ export default class ComponentConnector {
   }
 
   init() {
-    const $elem = $('<div style="display: inline-flex;" class="widget-component-connector"></div>');
+    const $elem = $(
+      '<div style="display: inline-flex;" class="widget-component-connector"></div>'
+    );
     const elem = $elem[0];
     const { opts, widget, componentName } = this;
 
     Ember.run.next(() => {
       const mounted = widget._findView();
 
-      const view = widget
-        .register
+      const view = widget.register
         .lookupFactory(`component:${componentName}`)
         .create(opts);
+
+      // component connector is not triggering didReceiveAttrs
+      // so we make sure to compute the component attrs
+      if (view.selectKitComponent) {
+        view._compute();
+      }
 
       if (Ember.setOwner) {
         Ember.setOwner(view, Ember.getOwner(mounted));
@@ -48,4 +55,4 @@ export default class ComponentConnector {
   }
 }
 
-ComponentConnector.prototype.type = 'Widget';
+ComponentConnector.prototype.type = "Widget";

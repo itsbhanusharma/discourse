@@ -10,31 +10,17 @@ describe PostActionNotifier do
   let!(:evil_trout) { Fabricate(:evil_trout) }
   let(:post) { Fabricate(:post) }
 
-  context 'liking' do
-    context 'when liking a post' do
-      it 'creates a notification' do
-        expect {
-          PostAction.act(evil_trout, post, PostActionType.types[:like])
-          # one like (welcome badge deferred)
-        }.to change(Notification, :count).by(1)
-      end
-    end
-
-    context 'when removing a liked post' do
-      it 'removes a notification' do
-        PostAction.act(evil_trout, post, PostActionType.types[:like])
-        expect {
-          PostAction.remove_act(evil_trout, post, PostActionType.types[:like])
-        }.to change(Notification, :count).by(-1)
-      end
-    end
-  end
-
   context 'when editing a post' do
     it 'notifies a user of the revision' do
       expect {
         post.revise(evil_trout, raw: "world is the new body of the message")
       }.to change(post.user.notifications, :count).by(1)
+    end
+
+    it 'stores the revision number with the notification' do
+      post.revise(evil_trout, raw: "world is the new body of the message")
+      notification_data = JSON.parse post.user.notifications.last.data
+      expect(notification_data['revision_number']).to eq post.post_revisions.last.number
     end
 
     context "edit notifications are disabled" do

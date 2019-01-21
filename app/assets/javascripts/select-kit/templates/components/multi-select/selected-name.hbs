@@ -1,13 +1,14 @@
-{{#if isLocked}}
-  <span class="delete-icon">
-    {{d-icon "lock"}}
-  </span>
-{{else}}
-  <span class="locked-icon" {{action onDeselect content bubbles=false}}>
-    {{d-icon "times"}}
-  </span>
-{{/if}}
+{{#if headerContent}}<div class="header">{{headerContent}}</div>{{/if}}
 
-<span class="name">
-  {{content.name}}
-</span>
+<div class="body">
+  <span class="name">
+    {{#if forceEscape}}
+      {{label}}
+    {{else}}
+      {{{label}}}
+    {{/if}}
+  </span>
+  {{d-icon 'times'}}
+</div>
+
+{{#if footerContent}}<div class="footer">{{footerContent}}</div>{{/if}}

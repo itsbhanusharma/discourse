@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+#
 require_dependency 'archetype'
 
 class PostTiming < ActiveRecord::Base
@@ -10,7 +12,7 @@ class PostTiming < ActiveRecord::Base
   def self.pretend_read(topic_id, actual_read_post_number, pretend_read_post_number)
     # This is done in SQL cause the logic is quite tricky and we want to do this in one db hit
     #
-    exec_sql("INSERT INTO post_timings(topic_id, user_id, post_number, msecs)
+    DB.exec("INSERT INTO post_timings(topic_id, user_id, post_number, msecs)
               SELECT :topic_id, user_id, :pretend_read_post_number, 1
               FROM post_timings pt
               WHERE topic_id = :topic_id AND
@@ -32,7 +34,7 @@ class PostTiming < ActiveRecord::Base
 
   def self.record_new_timing(args)
     begin
-      exec_sql("INSERT INTO post_timings (topic_id, user_id, post_number, msecs)
+      DB.exec("INSERT INTO post_timings (topic_id, user_id, post_number, msecs)
                 SELECT :topic_id, :user_id, :post_number, :msecs
                 WHERE NOT EXISTS(SELECT 1 FROM post_timings
                                  WHERE topic_id = :topic_id
@@ -51,14 +53,34 @@ class PostTiming < ActiveRecord::Base
 
   # Increases a timer if a row exists, otherwise create it
   def self.record_timing(args)
-    rows = exec_sql_row_count("UPDATE post_timings
-                               SET msecs = msecs + :msecs
-                               WHERE topic_id = :topic_id
-                                AND user_id = :user_id
-                                AND post_number = :post_number",
-                                args)
+    rows = DB.exec(<<~SQL, args)
+      UPDATE post_timings
+       SET msecs = msecs + :msecs
+       WHERE topic_id = :topic_id
+        AND user_id = :user_id
+        AND post_number = :post_number
+    SQL
 
     record_new_timing(args) if rows == 0
+  end
+
+  def self.destroy_last_for(user, topic_id)
+    topic = Topic.find(topic_id)
+    post_number = user.staff? ? topic.highest_staff_post_number : topic.highest_post_number
+
+    last_read = post_number - 1
+
+    PostTiming.transaction do
+      PostTiming.where("topic_id = ? AND user_id = ? AND post_number > ?", topic.id, user.id, last_read).delete_all
+      if last_read < 1
+        last_read = nil
+      end
+
+      TopicUser.where(user_id: user.id, topic_id: topic.id).update_all(
+        highest_seen_post_number: last_read,
+        last_read_post_number: last_read
+      )
+    end
   end
 
   def self.destroy_for(user_id, topic_ids)
@@ -76,7 +98,7 @@ class PostTiming < ActiveRecord::Base
   MAX_READ_TIME_PER_BATCH = 60 * 1000.0
 
   def self.process_timings(current_user, topic_id, topic_time, timings, opts = {})
-    current_user.user_stat.update_time_read!
+    UserStat.update_time_read!(current_user.id)
 
     max_time_per_post = ((Time.now - current_user.created_at) * 1000.0)
     max_time_per_post = MAX_READ_TIME_PER_BATCH if max_time_per_post > MAX_READ_TIME_PER_BATCH
@@ -103,8 +125,7 @@ class PostTiming < ActiveRecord::Base
     end
 
     if join_table.length > 0
-      sql = <<SQL
-
+      sql = <<~SQL
       UPDATE post_timings t
       SET msecs = t.msecs + x.msecs
       FROM (#{join_table.join(" UNION ALL ")}) x
@@ -114,10 +135,17 @@ class PostTiming < ActiveRecord::Base
       RETURNING x.idx
 SQL
 
-      result = exec_sql(sql)
-      result.type_map = SqlBuilder.pg_type_map
-      existing = Set.new(result.column_values(0))
-      new_posts_read = timings.size - existing.size if Topic.where(id: topic_id, archetype: Archetype.default).exists?
+      existing = Set.new(DB.query_single(sql))
+
+      sql = <<~SQL
+      SELECT 1 FROM topics
+      WHERE deleted_at IS NULL AND
+        archetype = 'regular' AND
+        id = :topic_id
+      SQL
+
+      is_regular = DB.exec(sql, topic_id: topic_id) == 1
+      new_posts_read = timings.size - existing.size if is_regular
 
       timings.each_with_index do |(post_number, time), index|
         unless existing.include?(index)

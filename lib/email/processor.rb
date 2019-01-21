@@ -1,6 +1,7 @@
 module Email
 
   class Processor
+    attr_reader :receiver
 
     def initialize(mail, retry_on_rate_limit = true)
       @mail = mail
@@ -17,11 +18,9 @@ module Email
         @receiver.process!
       rescue RateLimiter::LimitExceeded
         @retry_on_rate_limit ? Jobs.enqueue(:process_email, mail: @mail) : raise
-      rescue Email::Receiver::BouncedEmailError => e
-        # never reply to bounced emails
-        log_email_process_failure(@mail, e)
-        set_incoming_email_rejection_message(@receiver.incoming_email, I18n.t("emails.incoming.errors.bounced_email_error"))
       rescue => e
+        return handle_bounce(e) if @receiver.is_bounce?
+
         log_email_process_failure(@mail, e)
         incoming_email = @receiver.try(:incoming_email)
         rejection_message = handle_failure(@mail, e)
@@ -33,9 +32,16 @@ module Email
 
     private
 
+    def handle_bounce(e)
+      # never reply to bounced emails
+      log_email_process_failure(@mail, e)
+      set_incoming_email_rejection_message(@receiver.incoming_email, I18n.t("emails.incoming.errors.bounced_email_error"))
+    end
+
     def handle_failure(mail_string, e)
       message_template = case e
                          when Email::Receiver::NoSenderDetectedError       then return nil
+                         when Email::Receiver::FromReplyByAddressError     then return nil
                          when Email::Receiver::EmptyEmailError             then :email_reject_empty
                          when Email::Receiver::NoBodyDetectedError         then :email_reject_empty
                          when Email::Receiver::UserNotFoundError           then :email_reject_user_not_found
@@ -51,10 +57,12 @@ module Email
                          when Email::Receiver::TopicNotFoundError          then :email_reject_topic_not_found
                          when Email::Receiver::TopicClosedError            then :email_reject_topic_closed
                          when Email::Receiver::InvalidPost                 then :email_reject_invalid_post
+                         when Email::Receiver::TooShortPost                then :email_reject_post_too_short
                          when Email::Receiver::UnsubscribeNotAllowed       then :email_reject_invalid_post
                          when ActiveRecord::Rollback                       then :email_reject_invalid_post
                          when Email::Receiver::InvalidPostAction           then :email_reject_invalid_post_action
                          when Discourse::InvalidAccess                     then :email_reject_invalid_access
+                         when Email::Receiver::OldDestinationError         then :email_reject_old_destination
                          else                                                   :email_reject_unrecognized_error
       end
 
@@ -67,12 +75,21 @@ module Email
         template_args[:post_error] = e.message
       end
 
+      if message_template == :email_reject_post_too_short
+        template_args[:count] = SiteSetting.min_post_length
+      end
+
       if message_template == :email_reject_unrecognized_error
         msg  = "Unrecognized error type (#{e.class}: #{e.message}) when processing incoming email"
         msg += "\n\nBacktrace:\n#{e.backtrace.map { |l| "  #{l}" }.join("\n")}"
         msg += "\n\nMail:\n#{mail_string}"
 
         Rails.logger.error(msg)
+      end
+
+      if message_template == :email_reject_old_destination
+        template_args[:short_url] = e.message
+        template_args[:number_of_days] = SiteSetting.disallow_reply_by_email_after_days
       end
 
       if message_template

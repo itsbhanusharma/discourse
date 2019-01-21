@@ -68,7 +68,7 @@ class NewPostManager
   end
 
   def self.exempt_user?(user)
-    user.staff? || user.staged
+    user.staff?
   end
 
   def self.post_needs_approval?(manager)
@@ -81,7 +81,21 @@ class NewPostManager
     (manager.args[:title].present? && user.trust_level < SiteSetting.approve_new_topics_unless_trust_level.to_i) ||
     is_fast_typer?(manager) ||
     matches_auto_silence_regex?(manager) ||
-    WordWatcher.new("#{manager.args[:title]} #{manager.args[:raw]}").requires_approval?
+    WordWatcher.new("#{manager.args[:title]} #{manager.args[:raw]}").requires_approval? ||
+    (SiteSetting.approve_unless_staged && user.staged) ||
+    post_needs_approval_in_its_category?(manager)
+  end
+
+  def self.post_needs_approval_in_its_category?(manager)
+    if manager.args[:topic_id].present?
+      cat = Category.joins(:topics).find_by(topics: { id: manager.args[:topic_id] })
+      return false unless cat
+      cat.require_reply_approval?
+    elsif manager.args[:category].present?
+      Category.find(manager.args[:category]).require_topic_approval?
+    else
+      false
+    end
   end
 
   def self.default_handler(manager)
@@ -90,19 +104,25 @@ class NewPostManager
       post = Post.new(raw: manager.args[:raw])
       post.user = manager.user
       validator.validate(post)
+
       if post.errors[:raw].present?
         result = NewPostResult.new(:created_post, false)
         result.errors[:base] << post.errors[:raw]
         return result
-      end
-
-      # Can the user create the post in the first place?
-      if manager.args[:topic_id]
+      elsif manager.args[:topic_id]
         topic = Topic.unscoped.where(id: manager.args[:topic_id]).first
 
         unless manager.user.guardian.can_create_post_on_topic?(topic)
           result = NewPostResult.new(:created_post, false)
           result.errors[:base] << I18n.t(:topic_not_found)
+          return result
+        end
+      elsif manager.args[:category]
+        category = Category.find_by(id: manager.args[:category])
+
+        unless manager.user.guardian.can_create_topic_on_category?(category)
+          result = NewPostResult.new(:created_post, false)
+          result.errors[:base] << I18n.t("js.errors.reasons.forbidden")
           return result
         end
       end
@@ -123,6 +143,7 @@ class NewPostManager
     SiteSetting.approve_post_count > 0 ||
     SiteSetting.approve_unless_trust_level.to_i > 0 ||
     SiteSetting.approve_new_topics_unless_trust_level.to_i > 0 ||
+    SiteSetting.approve_unless_staged ||
     WordWatcher.words_for_action_exists?(:require_approval) ||
     handlers.size > 1
   end
@@ -133,9 +154,9 @@ class NewPostManager
   end
 
   def perform
-    if !self.class.exempt_user?(@user) && WordWatcher.new("#{@args[:title]} #{@args[:raw]}").should_block?
+    if !self.class.exempt_user?(@user) && matches = WordWatcher.new("#{@args[:title]} #{@args[:raw]}").should_block?
       result = NewPostResult.new(:created_post, false)
-      result.errors[:base] << I18n.t('contains_blocked_words')
+      result.errors[:base] << I18n.t('contains_blocked_words', word: matches[0])
       return result
     end
 

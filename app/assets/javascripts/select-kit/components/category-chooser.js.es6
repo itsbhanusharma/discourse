@@ -3,6 +3,7 @@ import { on } from "ember-addons/ember-computed-decorators";
 import computed from "ember-addons/ember-computed-decorators";
 import PermissionType from "discourse/models/permission-type";
 import Category from "discourse/models/category";
+import { categoryBadgeHTML } from "discourse/helpers/category-link";
 const { get, isNone, isEmpty } = Ember;
 
 export default ComboBoxComponent.extend({
@@ -14,30 +15,51 @@ export default ComboBoxComponent.extend({
   rowComponent: "category-row",
   noneRowComponent: "none-category-row",
   allowSubCategories: true,
+  permissionType: PermissionType.FULL,
+
+  init() {
+    this._super(...arguments);
+
+    this.get("rowComponentOptions").setProperties({
+      allowUncategorized: this.get("allowUncategorized")
+    });
+  },
 
   filterComputedContent(computedContent, computedValue, filter) {
-    if (isEmpty(filter)) { return computedContent; }
+    if (isEmpty(filter)) {
+      return computedContent;
+    }
+
+    if (this.get("scopedCategoryId")) {
+      computedContent = this.categoriesByScope().map(c =>
+        this.computeContentItem(c)
+      );
+    }
 
     const _matchFunction = (f, text) => {
-      return text.toLowerCase().indexOf(f) > -1;
+      return this._normalize(text).indexOf(f) > -1;
     };
-    const lowerFilter = filter.toLowerCase();
 
     return computedContent.filter(c => {
       const category = Category.findById(get(c, "value"));
       const text = get(c, "name");
       if (category && category.get("parentCategory")) {
         const categoryName = category.get("parentCategory.name");
-        return _matchFunction(lowerFilter, text) || _matchFunction(lowerFilter, categoryName);
+        return (
+          _matchFunction(filter, text) || _matchFunction(filter, categoryName)
+        );
       } else {
-        return _matchFunction(lowerFilter, text);
+        return _matchFunction(filter, text);
       }
     });
   },
 
   @computed("rootNone", "rootNoneLabel")
   none(rootNone, rootNoneLabel) {
-    if (this.siteSettings.allow_uncategorized_topics || this.get("allowUncategorized")) {
+    if (
+      this.siteSettings.allow_uncategorized_topics ||
+      this.get("allowUncategorized")
+    ) {
       if (!isNone(rootNone)) {
         return rootNoneLabel || "category.none";
       } else {
@@ -46,6 +68,36 @@ export default ComboBoxComponent.extend({
     } else {
       return "category.choose";
     }
+  },
+
+  computeHeaderContent() {
+    let content = this._super(...arguments);
+
+    if (this.get("hasSelection")) {
+      const category = Category.findById(content.value);
+      const parentCategoryId = category.get("parent_category_id");
+      const hasParentCategory = Ember.isPresent(parentCategoryId);
+
+      let badge = "";
+
+      if (hasParentCategory) {
+        const parentCategory = Category.findById(parentCategoryId);
+        badge += categoryBadgeHTML(parentCategory, {
+          link: false,
+          allowUncategorized: true
+        }).htmlSafe();
+      }
+
+      badge += categoryBadgeHTML(category, {
+        link: false,
+        hideParent: hasParentCategory ? true : false,
+        allowUncategorized: true
+      }).htmlSafe();
+
+      content.label = badge;
+    }
+
+    return content;
   },
 
   @on("didRender")
@@ -58,15 +110,25 @@ export default ComboBoxComponent.extend({
     this.appEvents.off("composer:resized");
   },
 
-  computeContent() {
-    const categories = Discourse.SiteSettings.fixed_category_positions_on_create ?
-      Category.list() :
-      Category.listByActivity();
+  didSelect(computedContentItem) {
+    if (this.attrs.onChooseCategory) {
+      this.attrs.onChooseCategory(computedContentItem.originalContent);
+    }
+  },
 
-    let scopedCategoryId = this.get("scopedCategoryId");
+  computeContent() {
+    return this.categoriesByScope(this.get("scopedCategoryId"));
+  },
+
+  categoriesByScope(scopedCategoryId = null) {
+    const categories = Discourse.SiteSettings.fixed_category_positions_on_create
+      ? Category.list()
+      : Category.listByActivity();
+
     if (scopedCategoryId) {
       const scopedCat = Category.findById(scopedCategoryId);
-      scopedCategoryId = scopedCat.get("parent_category_id") || scopedCat.get("id");
+      scopedCategoryId =
+        scopedCat.get("parent_category_id") || scopedCat.get("id");
     }
 
     const excludeCategoryId = this.get("excludeCategoryId");
@@ -74,19 +136,31 @@ export default ComboBoxComponent.extend({
     return categories.filter(c => {
       const categoryId = this.valueForContentItem(c);
 
-      if (scopedCategoryId && categoryId !== scopedCategoryId && get(c, "parent_category_id") !== scopedCategoryId) {
+      if (
+        scopedCategoryId &&
+        categoryId !== scopedCategoryId &&
+        get(c, "parent_category_id") !== scopedCategoryId
+      ) {
         return false;
       }
 
-      if (this.get("allowSubCategories") === false && c.get("parentCategory") ) {
+      if (this.get("allowSubCategories") === false && c.get("parentCategory")) {
         return false;
       }
 
-      if ((this.get("allowUncategorized") === false && get(c, "isUncategorizedCategory")) || excludeCategoryId === categoryId) {
+      if (
+        (this.get("allowUncategorized") === false &&
+          get(c, "isUncategorizedCategory")) ||
+        excludeCategoryId === categoryId
+      ) {
         return false;
       }
 
-      return get(c, "permission") === PermissionType.FULL;
+      if (this.get("permissionType")) {
+        return this.get("permissionType") === get(c, "permission");
+      }
+
+      return true;
     });
   }
 });

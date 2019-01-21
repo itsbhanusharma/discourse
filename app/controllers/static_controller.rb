@@ -4,13 +4,17 @@ require_dependency 'file_helper'
 class StaticController < ApplicationController
 
   skip_before_action :check_xhr, :redirect_to_login_if_required
-  skip_before_action :verify_authenticity_token, only: [:brotli_asset, :cdn_asset, :enter, :favicon]
+  skip_before_action :verify_authenticity_token, only: [:brotli_asset, :cdn_asset, :enter, :favicon, :service_worker_asset]
+  skip_before_action :preload_json, only: [:brotli_asset, :cdn_asset, :enter, :favicon, :service_worker_asset]
+  skip_before_action :handle_theme, only: [:brotli_asset, :cdn_asset, :enter, :favicon, :service_worker_asset]
 
   PAGES_WITH_EMAIL_PARAM = ['login', 'password_reset', 'signup']
 
   def show
     return redirect_to(path '/') if current_user && (params[:id] == 'login' || params[:id] == 'signup')
-    return redirect_to path('/login') if SiteSetting.login_required? && current_user.nil? && (params[:id] == 'faq' || params[:id] == 'guidelines')
+    if SiteSetting.login_required? && current_user.nil? && ['faq', 'guidelines'].include?(params[:id])
+      return redirect_to path('/login')
+    end
 
     map = {
       "faq" => { redirect: "faq_url", topic_id: "guidelines_topic_id" },
@@ -35,7 +39,12 @@ class StaticController < ApplicationController
     if map.has_key?(@page)
       @topic = Topic.find_by_id(SiteSetting.send(map[@page][:topic_id]))
       raise Discourse::NotFound unless @topic
-      @title = "#{@topic.title} - #{SiteSetting.title}"
+      title_prefix = if I18n.exists?("js.#{@page}")
+        I18n.t("js.#{@page}")
+      else
+        @topic.title
+      end
+      @title = "#{title_prefix} - #{SiteSetting.title}"
       @body = @topic.posts.first.cooked
       @faq_overriden = !SiteSetting.faq_url.blank?
       render :show, layout: !request.xhr?, formats: [:html]
@@ -84,7 +93,7 @@ class StaticController < ApplicationController
           destination = uri.path
           destination = "#{uri.path}?#{uri.query}" if uri.path =~ /new-topic/ || uri.path =~ /new-message/ || uri.path =~ /user-api-key/
         end
-      rescue URI::InvalidURIError
+      rescue URI::Error
         # Do nothing if the URI is invalid
       end
     end
@@ -92,29 +101,38 @@ class StaticController < ApplicationController
     redirect_to destination
   end
 
-  # We need to be able to draw our favicon on a canvas
-  # and pull it off the canvas into a data uri
-  # This can work by ensuring people set all the right CORS
-  # settings in the CDN asset, BUT its annoying and error prone
-  # instead we cache the favicon in redis and serve it out real quick with
-  # a huge expiry, we also cache these assets in nginx so it bypassed if needed
+  FAVICON ||= -"favicon"
+
+  # We need to be able to draw our favicon on a canvas, this happens when you enable the feature
+  # that draws the notification count on top of favicon (per user default off)
+  #
+  # With s3 the original upload is going to be stored at s3, we don't have a local copy of the favicon.
+  # To allow canvas to work with s3 we are going to need to add special CORS headers and use
+  # a special crossorigin hint on the original, this is not easily workable.
+  #
+  # Forcing all consumers to set magic CORS headers on a CDN is also not workable for us.
+  #
+  # So we cache the favicon in redis and serve it out real quick with
+  # a huge expiry, we also cache these assets in nginx so it is bypassed if needed
   def favicon
+    is_asset_path
 
     hijack do
-      data = DistributedMemoizer.memoize('favicon' + SiteSetting.favicon_url, 60 * 30) do
+      data = DistributedMemoizer.memoize(FAVICON + SiteSetting.site_favicon_url, 60 * 30) do
         begin
           file = FileHelper.download(
-            SiteSetting.favicon_url,
+            UrlHelper.absolute(SiteSetting.site_favicon_url),
             max_file_size: 50.kilobytes,
-            tmp_file_name: "favicon.png",
+            tmp_file_name: FAVICON,
             follow_redirect: true
           )
+          file ||= Tempfile.new([FAVICON, ".png"])
           data = file.read
           file.unlink
           data
         rescue => e
           AdminDashboardData.add_problem_message('dashboard.bad_favicon_url', 1800)
-          Rails.logger.debug("Invalid favicon_url #{SiteSetting.favicon_url}: #{e}\n#{e.backtrace}")
+          Rails.logger.debug("Invalid favicon_url #{SiteSetting.site_favicon_url}: #{e}\n#{e.backtrace}")
           ""
         end
       end
@@ -134,13 +152,39 @@ class StaticController < ApplicationController
   end
 
   def brotli_asset
+    is_asset_path
+
     serve_asset(".br") do
       response.headers["Content-Encoding"] = 'br'
     end
   end
 
   def cdn_asset
+    is_asset_path
+
     serve_asset
+  end
+
+  def service_worker_asset
+    is_asset_path
+
+    respond_to do |format|
+      format.js do
+        # https://github.com/w3c/ServiceWorker/blob/master/explainer.md#updating-a-service-worker
+        # Maximum cache that the service worker will respect is 24 hours.
+        # However, ensure that these may be cached and served for longer on servers.
+        immutable_for 1.year
+
+        if Rails.application.assets_manifest.assets['service-worker.js']
+          path = File.expand_path(Rails.root + "public/assets/#{Rails.application.assets_manifest.assets['service-worker.js']}")
+          response.headers["Last-Modified"] = File.ctime(path).httpdate
+        end
+        render(
+          plain: Rails.application.assets_manifest.find_sources('service-worker.js').first,
+          content_type: 'application/javascript'
+        )
+      end
+    end
   end
 
   protected

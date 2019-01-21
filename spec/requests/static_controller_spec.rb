@@ -1,24 +1,21 @@
 require 'rails_helper'
 
 describe StaticController do
+  let(:upload) { Fabricate(:upload) }
 
   context '#favicon' do
-    before do
-      # this is a mess in test, will fix in a future commit
-      FinalDestination.stubs(:lookup_ip).returns('1.2.3.4')
-    end
-
     let(:png) { Base64.decode64("R0lGODlhAQABALMAAAAAAIAAAACAAICAAAAAgIAAgACAgMDAwICAgP8AAAD/AP//AAAA//8A/wD//wBiZCH5BAEAAA8ALAAAAAABAAEAAAQC8EUAOw==") }
 
+    before { FinalDestination.stubs(:lookup_ip).returns("1.2.3.4") }
+
+    after do
+      $redis.flushall
+    end
+
     it 'returns the default favicon for a missing download' do
-
-      url = "https://somewhere1.over.rainbow/#{SecureRandom.hex}.png"
-
-      stub_request(:head, url).
-        with(headers: { 'Host' => 'somewhere1.over.rainbow' }).
-        to_return(status: 404, body: "", headers: {})
-
-      SiteSetting.favicon_url = url
+      url = UrlHelper.absolute(upload.url)
+      SiteSetting.favicon = upload
+      stub_request(:get, url).to_return(status: 404)
 
       get '/favicon/proxied'
 
@@ -30,16 +27,9 @@ describe StaticController do
     end
 
     it 'can proxy a favicon correctly' do
-      url = "https://somewhere.over.rainbow/#{SecureRandom.hex}.png"
-
-      stub_request(:head, url).
-        with(headers: { 'Host' => 'somewhere.over.rainbow' }).
-        to_return(status: 200, body: "", headers: {})
-
-      stub_request(:get, url).
-        to_return(status: 200, body: png, headers: {})
-
-      SiteSetting.favicon_url = url
+      url = UrlHelper.absolute(upload.url)
+      SiteSetting.favicon = upload
+      stub_request(:get, url).to_return(status: 200, body: png)
 
       get '/favicon/proxied'
 
@@ -51,7 +41,6 @@ describe StaticController do
 
   context '#brotli_asset' do
     it 'returns a non brotli encoded 404 if asset is missing' do
-
       get "/brotli_asset/missing.js"
 
       expect(response.status).to eq(404)
@@ -110,8 +99,9 @@ describe StaticController do
       it "should return the right response" do
         get "/faq"
 
-        expect(response).to be_success
+        expect(response.status).to eq(200)
         expect(response.body).to include(I18n.t('js.faq'))
+        expect(response.body).to include("<title>FAQ - Discourse</title>")
       end
     end
 
@@ -125,7 +115,7 @@ describe StaticController do
           it "renders the #{id} page" do
             get "/#{id}"
 
-            expect(response).to be_success
+            expect(response.status).to eq(200)
             expect(response.body).to include(text)
           end
         end
@@ -162,7 +152,7 @@ describe StaticController do
 
       get "/login"
 
-      expect(response).to be_success
+      expect(response.status).to eq(200)
 
       expect(response.body).to include(PrettyText.cook(I18n.t(
         'login_required.welcome_message', title: SiteSetting.title
@@ -174,32 +164,33 @@ describe StaticController do
         SiteSetting.login_required = true
       end
 
-      it 'faq page redirects to login page for anon' do
-        get '/faq'
-        expect(response).to redirect_to '/login'
+      ['faq', 'guidelines', 'rules', 'conduct'].each do |page_name|
+        it "#{page_name} page redirects to login page for anon" do
+          get "/#{page_name}"
+          expect(response).to redirect_to '/login'
+        end
+
+        it "#{page_name} page redirects to login page for anon" do
+          get "/#{page_name}"
+          expect(response).to redirect_to '/login'
+        end
+
+        it "#{page_name} page loads for logged in user" do
+          sign_in(Fabricate(:user))
+
+          get "/#{page_name}"
+
+          expect(response.status).to eq(200)
+          expect(response.body).to include(I18n.t('guidelines'))
+        end
       end
+    end
 
-      it 'guidelines page redirects to login page for anon' do
-        get '/guidelines'
-        expect(response).to redirect_to '/login'
-      end
-
-      it 'faq page loads for logged in user' do
-        sign_in(Fabricate(:user))
-
-        get '/faq'
-
-        expect(response).to be_success
-        expect(response.body).to include(I18n.t('js.faq'))
-      end
-
-      it 'guidelines page loads for logged in user' do
-        sign_in(Fabricate(:user))
-
-        get '/guidelines'
-
-        expect(response).to be_success
-        expect(response.body).to include(I18n.t('guidelines'))
+    context "crawler view" do
+      it "should include correct title" do
+        get '/faq', headers: { 'HTTP_USER_AGENT' => 'Googlebot' }
+        expect(response.status).to eq(200)
+        expect(response.body).to include("<title>FAQ - Discourse</title>")
       end
     end
   end

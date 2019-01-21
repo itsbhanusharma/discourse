@@ -19,23 +19,46 @@ class Guardian
   include TagGuardian
 
   class AnonymousUser
-    def blank?; true; end
-    def admin?; false; end
-    def staff?; false; end
-    def moderator?; false; end
-    def approved?; false; end
-    def staged?; false; end
-    def silenced?; false; end
-    def secure_category_ids; []; end
-    def topic_create_allowed_category_ids; []; end
-    def has_trust_level?(level); false; end
-    def email; nil; end
+    def blank?
+      true
+    end
+    def admin?
+      false
+    end
+    def staff?
+      false
+    end
+    def moderator?
+      false
+    end
+    def approved?
+      false
+    end
+    def staged?
+      false
+    end
+    def silenced?
+      false
+    end
+    def secure_category_ids
+      []
+    end
+    def topic_create_allowed_category_ids
+      []
+    end
+    def has_trust_level?(level)
+      false
+    end
+    def email
+      nil
+    end
   end
 
-  attr_accessor :can_see_emails
+  attr_reader :request
 
-  def initialize(user = nil)
+  def initialize(user = nil, request = nil)
     @user = user.presence || AnonymousUser.new
+    @request = request
   end
 
   def user
@@ -70,12 +93,13 @@ class Guardian
   def is_developer?
     @user &&
     is_admin? &&
-    (Rails.env.development? ||
+    (
+      Rails.env.development? ||
+      Developer.user_ids.include?(@user.id) ||
       (
         Rails.configuration.respond_to?(:developer_emails) &&
         Rails.configuration.developer_emails.include?(@user.email)
-      ) ||
-      Developer.user_ids.include?(@user.id)
+      )
     )
   end
 
@@ -111,6 +135,10 @@ class Guardian
     true
   end
 
+  def can_enable_safe_mode?
+    SiteSetting.enable_safe_mode? || is_staff?
+  end
+
   # Can the user edit the obj
   def can_edit?(obj)
     can_do?(:edit, obj)
@@ -127,6 +155,16 @@ class Guardian
   alias :can_move_posts? :can_moderate?
   alias :can_see_flags? :can_moderate?
   alias :can_close? :can_moderate?
+
+  def can_tag?(topic)
+    return false if topic.blank?
+
+    topic.private_message? ? can_tag_pms? : can_tag_topics?
+  end
+
+  def can_see_tags?(topic)
+    SiteSetting.tagging_enabled && topic.present? && (!topic.private_message? || can_tag_pms?)
+  end
 
   def can_send_activation_email?(user)
     user && is_staff? && !SiteSetting.must_approve_users?
@@ -204,8 +242,13 @@ class Guardian
     can_administer?(user) && !user.moderator?
   end
 
-  def can_grant_title?(user)
-    user && is_staff?
+  def can_grant_title?(user, title = nil)
+    return true if user && is_staff?
+    return false if title.nil?
+    return true if title.empty? # A title set to '(none)' in the UI is an empty string
+    return false if user != @user
+    return true if user.badges.where(name: title, allow_title: true).exists?
+    user.groups.where(title: title).exists?
   end
 
   def can_change_primary_group?(user)
@@ -245,15 +288,25 @@ class Guardian
 
   def can_invite_to?(object, groups = nil)
     return false unless authenticated?
-    return true if is_admin?
-    return false unless SiteSetting.enable_private_messages?
+    is_topic = object.is_a?(Topic)
+    return true if is_admin? && !is_topic
     return false if (SiteSetting.max_invites_per_day.to_i == 0 && !is_staff?)
     return false unless can_see?(object)
     return false if groups.present?
 
-    if object.is_a?(Topic) && object.category
-      if object.category.groups.any?
-        return true if object.category.groups.all? { |g| can_edit_group?(g) }
+    if is_topic
+      if object.private_message?
+        return true if is_admin?
+        return false unless SiteSetting.enable_personal_messages?
+        return false if object.reached_recipients_limit? && !is_staff?
+      end
+
+      if (category = object.category) && category.read_restricted
+        if (groups = category.groups&.where(automatic: false))&.any?
+          return groups.any? { |g| can_edit_group?(g) } ? true : false
+        else
+          return false
+        end
       end
     end
 
@@ -285,6 +338,11 @@ class Guardian
     is_admin? || (authenticated? && @user.id == user_id)
   end
 
+  def can_invite_group_to_private_message?(group, topic)
+    can_see_topic?(topic) &&
+    can_send_private_message?(group)
+  end
+
   def can_send_private_message?(target)
     is_user = target.is_a?(User)
     is_group = target.is_a?(Group)
@@ -297,42 +355,58 @@ class Guardian
     # User disabled private message
     (is_staff? || is_group || target.user_option.allow_private_messages) &&
     # PMs are enabled
-    (is_staff? || SiteSetting.enable_private_messages) &&
+    (is_staff? || SiteSetting.enable_personal_messages) &&
     # Can't send PMs to suspended users
     (is_staff? || is_group || !target.suspended?) &&
+    # Check group messageable level
+    (is_staff? || is_user || Group.messageable(@user).where(id: target.id).exists?) &&
     # Silenced users can only send PM to staff
     (!is_silenced? || target.staff?)
   end
 
-  def cand_send_private_messages_to_email?
+  def can_send_private_messages_to_email?
     # Staged users must be enabled to create a temporary user.
     SiteSetting.enable_staged_users &&
     # User is authenticated
     authenticated? &&
     # User is trusted enough
-    @user.has_trust_level?(SiteSetting.min_trust_to_send_email_messages) &&
-    # PMs to email addresses are enabled
-    (is_staff? || SiteSetting.enable_private_email_messages)
-  end
-
-  def can_see_emails?
-    @can_see_emails
+    (is_staff? ||
+      (
+        # TODO: 2019 evaluate if we need this flexibility
+        # perhaps we enable this unconditionally to TL4?
+        @user.has_trust_level?(SiteSetting.min_trust_to_send_email_messages) &&
+        SiteSetting.enable_personal_email_messages
+      )
+    )
   end
 
   def can_export_entity?(entity)
     return false unless @user
-    return true if is_staff?
+    return true if is_admin?
+    return entity != 'user_list' if is_moderator?
 
     # Regular users can only export their archives
     return false unless entity == "user_archive"
     UserExport.where(user_id: @user.id, created_at: (Time.zone.now.beginning_of_day..Time.zone.now.end_of_day)).count == 0
   end
 
-  def allow_theme?(theme_key)
-    if is_staff?
-      Theme.theme_keys.include?(theme_key)
-    else
-      Theme.user_theme_keys.include?(theme_key)
+  def allow_themes?(theme_ids, include_preview: false)
+    return true if theme_ids.blank?
+
+    if include_preview && is_staff? && (theme_ids - Theme.theme_ids).blank?
+      return true
+    end
+
+    parent = theme_ids.first
+    components = theme_ids[1..-1] || []
+
+    Theme.user_theme_ids.include?(parent) &&
+      (components - Theme.components_for(parent)).empty?
+  end
+
+  def auth_token
+    if cookie = request&.cookies[Auth::DefaultCurrentUserProvider::TOKEN_COOKIE]
+      UserAuthToken.hash_token(cookie)
     end
   end
 

@@ -1,4 +1,7 @@
 class UserOption < ActiveRecord::Base
+  # TODO: remove in 2019
+  self.ignored_columns = ["theme_key"]
+
   self.primary_key = :user_id
   belongs_to :user
   before_create :set_defaults
@@ -6,10 +9,14 @@ class UserOption < ActiveRecord::Base
   after_save :update_tracked_topics
 
   def self.ensure_consistency!
-    exec_sql("SELECT u.id FROM users u
-              LEFT JOIN user_options o ON o.user_id = u.id
-              WHERE o.user_id IS NULL").values.each do |id, _|
-      UserOption.create(user_id: id.to_i)
+    sql = <<~SQL
+      SELECT u.id FROM users u
+      LEFT JOIN user_options o ON o.user_id = u.id
+      WHERE o.user_id IS NULL
+    SQL
+
+    DB.query_single(sql).each do |id|
+      UserOption.create(user_id: id)
     end
   end
 
@@ -21,13 +28,19 @@ class UserOption < ActiveRecord::Base
     @like_notification_frequency_type ||= Enum.new(always: 0, first_time_and_daily: 1, first_time: 2, never: 3)
   end
 
+  def self.text_sizes
+    @text_sizes ||= Enum.new(normal: 0, larger: 1, largest: 2, smaller: 3)
+  end
+
+  validates :text_size_key, inclusion: { in: UserOption.text_sizes.values }
+
   def set_defaults
     self.email_always = SiteSetting.default_email_always
     self.mailing_list_mode = SiteSetting.default_email_mailing_list_mode
     self.mailing_list_mode_frequency = SiteSetting.default_email_mailing_list_mode_frequency
     self.email_direct = SiteSetting.default_email_direct
     self.automatically_unpin_topics = SiteSetting.default_topics_automatic_unpin
-    self.email_private_messages = SiteSetting.default_email_private_messages
+    self.email_private_messages = SiteSetting.default_email_personal_messages
     self.email_previous_replies = SiteSetting.default_email_previous_replies
     self.email_in_reply_to = SiteSetting.default_email_in_reply_to
 
@@ -50,6 +63,8 @@ class UserOption < ActiveRecord::Base
     end
 
     self.include_tl0_in_digests = SiteSetting.default_include_tl0_in_digests
+
+    self.text_size = SiteSetting.default_text_size
 
     true
   end
@@ -139,12 +154,20 @@ class UserOption < ActiveRecord::Base
     end
   end
 
+  def text_size
+    UserOption.text_sizes[text_size_key]
+  end
+
+  def text_size=(value)
+    self.text_size_key = UserOption.text_sizes[value.to_sym]
+  end
+
   private
 
-    def update_tracked_topics
-      return unless saved_change_to_auto_track_topics_after_msecs?
-      TrackedTopicsUpdater.new(id, auto_track_topics_after_msecs).call
-    end
+  def update_tracked_topics
+    return unless saved_change_to_auto_track_topics_after_msecs?
+    TrackedTopicsUpdater.new(id, auto_track_topics_after_msecs).call
+  end
 
 end
 
@@ -173,10 +196,12 @@ end
 #  mailing_list_mode_frequency      :integer          default(1), not null
 #  include_tl0_in_digests           :boolean          default(FALSE)
 #  notification_level_when_replying :integer
-#  theme_key                        :string
 #  theme_key_seq                    :integer          default(0), not null
 #  allow_private_messages           :boolean          default(TRUE), not null
-#  homepage_id                      :integer          default(null)
+#  homepage_id                      :integer
+#  theme_ids                        :integer          default([]), not null, is an Array
+#  hide_profile_and_presence        :boolean          default(FALSE), not null
+#  text_size_key                    :integer          default(0), not null
 #
 # Indexes
 #

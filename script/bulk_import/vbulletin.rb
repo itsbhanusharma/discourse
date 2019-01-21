@@ -5,50 +5,13 @@ require "htmlentities"
 
 class BulkImport::VBulletin < BulkImport::Base
 
+  TABLE_PREFIX = "vb_"
   SUSPENDED_TILL ||= Date.new(3000, 1, 1)
-  CHARSET_MAP = {
-    "armscii8" => nil,
-    "ascii"    => Encoding::US_ASCII,
-    "big5"     => Encoding::Big5,
-    "binary"   => Encoding::ASCII_8BIT,
-    "cp1250"   => Encoding::Windows_1250,
-    "cp1251"   => Encoding::Windows_1251,
-    "cp1256"   => Encoding::Windows_1256,
-    "cp1257"   => Encoding::Windows_1257,
-    "cp850"    => Encoding::CP850,
-    "cp852"    => Encoding::CP852,
-    "cp866"    => Encoding::IBM866,
-    "cp932"    => Encoding::Windows_31J,
-    "dec8"     => nil,
-    "eucjpms"  => Encoding::EucJP_ms,
-    "euckr"    => Encoding::EUC_KR,
-    "gb2312"   => Encoding::EUC_CN,
-    "gbk"      => Encoding::GBK,
-    "geostd8"  => nil,
-    "greek"    => Encoding::ISO_8859_7,
-    "hebrew"   => Encoding::ISO_8859_8,
-    "hp8"      => nil,
-    "keybcs2"  => nil,
-    "koi8r"    => Encoding::KOI8_R,
-    "koi8u"    => Encoding::KOI8_U,
-    "latin1"   => Encoding::ISO_8859_1,
-    "latin2"   => Encoding::ISO_8859_2,
-    "latin5"   => Encoding::ISO_8859_9,
-    "latin7"   => Encoding::ISO_8859_13,
-    "macce"    => Encoding::MacCentEuro,
-    "macroman" => Encoding::MacRoman,
-    "sjis"     => Encoding::SHIFT_JIS,
-    "swe7"     => nil,
-    "tis620"   => Encoding::TIS_620,
-    "ucs2"     => Encoding::UTF_16BE,
-    "ujis"     => Encoding::EucJP_ms,
-    "utf8"     => Encoding::UTF_8,
-  }
 
   def initialize
     super
 
-    host     = ENV["DB_HOST"]
+    host     = ENV["DB_HOST"] || "localhost"
     username = ENV["DB_USERNAME"] || "root"
     password = ENV["DB_PASSWORD"]
     database = ENV["DB_NAME"] || "vbulletin"
@@ -105,7 +68,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     groups = mysql_stream <<-SQL
         SELECT usergroupid, title, description, usertitle
-          FROM usergroup
+          FROM #{TABLE_PREFIX}usergroup
          WHERE usergroupid > #{@last_imported_group_id}
       ORDER BY usergroupid
     SQL
@@ -124,17 +87,18 @@ class BulkImport::VBulletin < BulkImport::Base
     puts "Importing users..."
 
     users = mysql_stream <<-SQL
-        SELECT user.userid, username, email, joindate, birthday, ipaddress, user.usergroupid, bandate, liftdate
-          FROM user
-     LEFT JOIN userban ON userban.userid = user.userid
-         WHERE user.userid > #{@last_imported_user_id}
-      ORDER BY user.userid
+        SELECT u.userid, username, email, joindate, birthday, ipaddress, u.usergroupid, bandate, liftdate
+          FROM #{TABLE_PREFIX}user u
+     LEFT JOIN #{TABLE_PREFIX}userban ub ON ub.userid = u.userid
+         WHERE u.userid > #{@last_imported_user_id}
+      ORDER BY u.userid
     SQL
 
     create_users(users) do |row|
       u = {
         imported_id: row[0],
         username: normalize_text(row[1]),
+        name: normalize_text(row[1]),
         created_at: Time.zone.at(row[3]),
         date_of_birth: parse_birthday(row[4]),
         primary_group_id: group_id_from_imported_id(row[6]),
@@ -152,10 +116,10 @@ class BulkImport::VBulletin < BulkImport::Base
     puts "Importing user emails..."
 
     users = mysql_stream <<-SQL
-        SELECT user.userid, email, joindate
-          FROM user
-         WHERE user.userid > #{@last_imported_user_id}
-      ORDER BY user.userid
+        SELECT u.userid, email, joindate
+          FROM #{TABLE_PREFIX}user u
+         WHERE u.userid > #{@last_imported_user_id}
+      ORDER BY u.userid
     SQL
 
     create_user_emails(users) do |row|
@@ -172,14 +136,14 @@ class BulkImport::VBulletin < BulkImport::Base
     puts "Importing user stats..."
 
     users = mysql_stream <<-SQL
-              SELECT user.userid, joindate, posts, COUNT(thread.threadid) AS threads, post.dateline
+              SELECT u.userid, joindate, posts, COUNT(t.threadid) AS threads, p.dateline
                      #{", post_thanks_user_amount, post_thanks_thanked_times" if @has_post_thanks}
-                FROM user
-     LEFT OUTER JOIN post ON post.postid = user.lastpostid
-     LEFT OUTER JOIN thread ON user.userid = thread.postuserid
-               WHERE user.userid > #{@last_imported_user_id}
-            GROUP BY user.userid
-            ORDER BY user.userid
+                FROM #{TABLE_PREFIX}user u
+     LEFT OUTER JOIN #{TABLE_PREFIX}post p ON p.postid = u.lastpostid
+     LEFT OUTER JOIN #{TABLE_PREFIX}thread t ON u.userid = t.postuserid
+               WHERE u.userid > #{@last_imported_user_id}
+            GROUP BY u.userid
+            ORDER BY u.userid
     SQL
 
     create_user_stats(users) do |row|
@@ -206,7 +170,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     group_users = mysql_stream <<-SQL
       SELECT usergroupid, userid
-        FROM user
+        FROM #{TABLE_PREFIX}user
        WHERE userid > #{@last_imported_user_id}
     SQL
 
@@ -223,7 +187,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     user_passwords = mysql_stream <<-SQL
         SELECT userid, password
-          FROM user
+          FROM #{TABLE_PREFIX}user
          WHERE userid > #{@last_imported_user_id}
       ORDER BY userid
     SQL
@@ -241,7 +205,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     user_salts = mysql_stream <<-SQL
         SELECT userid, salt
-          FROM user
+          FROM #{TABLE_PREFIX}user
          WHERE userid > #{@last_imported_user_id}
            AND LENGTH(COALESCE(salt, '')) > 0
       ORDER BY userid
@@ -260,7 +224,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     user_profiles = mysql_stream <<-SQL
         SELECT userid, homepage, profilevisits
-          FROM user
+          FROM #{TABLE_PREFIX}user
          WHERE userid > #{@last_imported_user_id}
       ORDER BY userid
     SQL
@@ -279,7 +243,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     categories = mysql_query(<<-SQL
         SELECT forumid, parentid, title, description, displayorder
-          FROM forum
+          FROM #{TABLE_PREFIX}forum
          WHERE forumid > #{@last_imported_category_id}
       ORDER BY forumid
     SQL
@@ -326,9 +290,9 @@ class BulkImport::VBulletin < BulkImport::Base
 
     topics = mysql_stream <<-SQL
         SELECT threadid, title, forumid, postuserid, open, dateline, views, visible, sticky
-          FROM thread
+          FROM #{TABLE_PREFIX}thread t
          WHERE threadid > #{@last_imported_topic_id}
-           AND EXISTS (SELECT 1 FROM post WHERE post.threadid = thread.threadid)
+           AND EXISTS (SELECT 1 FROM #{TABLE_PREFIX}post p WHERE p.threadid = t.threadid)
       ORDER BY threadid
     SQL
 
@@ -356,11 +320,11 @@ class BulkImport::VBulletin < BulkImport::Base
     puts "Importing posts..."
 
     posts = mysql_stream <<-SQL
-        SELECT postid, post.threadid, parentid, userid, post.dateline, post.visible, pagetext
+        SELECT postid, p.threadid, parentid, userid, p.dateline, p.visible, pagetext
                #{", post_thanks_amount" if @has_post_thanks}
 
-          FROM post
-          JOIN thread ON thread.threadid = post.threadid
+          FROM #{TABLE_PREFIX}post p
+          JOIN #{TABLE_PREFIX}thread t ON t.threadid = p.threadid
          WHERE postid > #{@last_imported_post_id}
       ORDER BY postid
     SQL
@@ -394,7 +358,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     post_thanks = mysql_stream <<-SQL
         SELECT postid, userid, date
-          FROM post_thanks
+          FROM #{TABLE_PREFIX}post_thanks
          WHERE postid > #{@last_imported_post_id}
       ORDER BY postid
     SQL
@@ -422,7 +386,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     topics = mysql_stream <<-SQL
         SELECT pmtextid, title, fromuserid, touserarray, dateline
-          FROM pmtext
+          FROM #{TABLE_PREFIX}pmtext
          WHERE pmtextid > (#{@last_imported_private_topic_id - PRIVATE_OFFSET})
       ORDER BY pmtextid
     SQL
@@ -451,7 +415,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     mysql_stream(<<-SQL
         SELECT pmtextid, touserarray
-          FROM pmtext
+          FROM #{TABLE_PREFIX}pmtext
          WHERE pmtextid > (#{@last_imported_private_topic_id - PRIVATE_OFFSET})
       ORDER BY pmtextid
     SQL
@@ -476,7 +440,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     posts = mysql_stream <<-SQL
         SELECT pmtextid, title, fromuserid, touserarray, dateline, message
-          FROM pmtext
+          FROM #{TABLE_PREFIX}pmtext
          WHERE pmtextid > #{@last_imported_private_post_id - PRIVATE_OFFSET}
       ORDER BY pmtextid
     SQL
@@ -500,15 +464,6 @@ class BulkImport::VBulletin < BulkImport::Base
 
   def extract_pm_title(title)
     normalize_text(title).scrub.gsub(/^Re\s*:\s*/i, "")
-  end
-
-  def normalize_text(text)
-    @html_entities.decode(normalize_charset(text.presence || "").scrub)
-  end
-
-  def normalize_charset(text)
-    return text if @encoding == Encoding::UTF_8
-    return text && text.encode(@encoding).force_encoding(Encoding::UTF_8)
   end
 
   def parse_birthday(birthday)

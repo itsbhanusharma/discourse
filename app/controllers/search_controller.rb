@@ -9,6 +9,9 @@ class SearchController < ApplicationController
   end
 
   def show
+    @search_term = params[:q]
+    raise Discourse::InvalidParameters.new(:q) if @search_term.present? && @search_term.length < SiteSetting.min_search_term_length
+
     search_args = {
       type_filter: 'topic',
       guardian: guardian,
@@ -29,7 +32,6 @@ class SearchController < ApplicationController
     search_args[:ip_address] = request.remote_ip
     search_args[:user_id] = current_user.id if current_user.present?
 
-    @search_term = params[:q]
     search = Search.new(@search_term, search_args)
     result = search.execute
 
@@ -66,6 +68,7 @@ class SearchController < ApplicationController
     search_args[:search_type] = :header
     search_args[:ip_address] = request.remote_ip
     search_args[:user_id] = current_user.id if current_user.present?
+    search_args[:restrict_to_archetype] = params[:restrict_to_archetype] if params[:restrict_to_archetype].present?
 
     search = Search.new(params[:term], search_args)
     result = search.execute
@@ -77,7 +80,8 @@ class SearchController < ApplicationController
     params.require(:search_result_type)
     params.require(:search_result_id)
 
-    if params[:search_result_type] == 'topic'
+    search_result_type = params[:search_result_type].downcase.to_sym
+    if SearchLog.search_result_types.has_key?(search_result_type)
       attributes = { id: params[:search_log_id] }
       if current_user.present?
         attributes[:user_id] = current_user.id
@@ -85,8 +89,15 @@ class SearchController < ApplicationController
         attributes[:ip_address] = request.remote_ip
       end
 
+      if search_result_type == :tag
+        search_result_id = Tag.find_by_name(params[:search_result_id])&.id
+      else
+        search_result_id = params[:search_result_id]
+      end
+
       SearchLog.where(attributes).update_all(
-        clicked_topic_id: params[:search_result_id]
+        search_result_type: SearchLog.search_result_types[search_result_type],
+        search_result_id: search_result_id
       )
     end
 

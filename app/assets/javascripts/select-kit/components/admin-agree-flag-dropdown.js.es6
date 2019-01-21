@@ -10,7 +10,7 @@ export default DropdownSelectBox.extend({
   headerIcon: "thumbs-o-up",
 
   computeHeaderContent() {
-    let content = this.baseHeaderComputedContent();
+    let content = this._super(...arguments);
     content.name = `${I18n.t("admin.flags.agree")}...`;
     return content;
   },
@@ -20,7 +20,10 @@ export default DropdownSelectBox.extend({
     return adminTools.spammerDetails(user);
   },
 
-  canDeleteSpammer: Ember.computed.and("spammerDetails.canDelete", "post.flaggedForSpam"),
+  canDeleteSpammer: Ember.computed.and(
+    "spammerDetails.canDelete",
+    "post.flaggedForSpam"
+  ),
 
   computeContent() {
     const content = [];
@@ -32,8 +35,8 @@ export default DropdownSelectBox.extend({
         icon: "eye",
         id: "confirm-agree-restore",
         action: () => this.send("perform", "restore"),
-        label:  I18n.t("admin.flags.agree_flag_restore_post"),
-        description:  I18n.t("admin.flags.agree_flag_restore_post_title")
+        label: I18n.t("admin.flags.agree_flag_restore_post"),
+        description: I18n.t("admin.flags.agree_flag_restore_post_title")
       });
     } else {
       if (!post.get("postHidden")) {
@@ -50,18 +53,34 @@ export default DropdownSelectBox.extend({
     content.push({
       icon: "thumbs-o-up",
       id: "confirm-agree-keep",
-      description: I18n.t('admin.flags.agree_flag_title'),
+      description: I18n.t("admin.flags.agree_flag_title"),
       action: () => this.send("perform", "keep"),
-      label:  I18n.t("admin.flags.agree_flag"),
+      label: I18n.t("admin.flags.agree_flag")
+    });
+
+    content.push({
+      icon: "ban",
+      id: "confirm-agree-suspend",
+      description: I18n.t("admin.flags.agree_flag_suspend_title"),
+      action: () => this.send("showSuspendModal"),
+      label: I18n.t("admin.flags.agree_flag_suspend")
+    });
+
+    content.push({
+      icon: "microphone-slash",
+      id: "confirm-agree-silence",
+      description: I18n.t("admin.flags.agree_flag_silence_title"),
+      action: () => this.send("showSilenceModal"),
+      label: I18n.t("admin.flags.agree_flag_silence")
     });
 
     if (canDeleteSpammer) {
       content.push({
-        title:  I18n.t("admin.flags.delete_spammer_title"),
+        title: I18n.t("admin.flags.delete_spammer_title"),
         icon: "exclamation-triangle",
         id: "delete-spammer",
         action: () => this.send("deleteSpammer"),
-        label:  I18n.t("admin.flags.delete_spammer"),
+        label: I18n.t("admin.flags.delete_spammer")
       });
     }
 
@@ -69,7 +88,10 @@ export default DropdownSelectBox.extend({
   },
 
   mutateValue(value) {
-    const computedContentItem = this.get("computedContent").findBy("value", value);
+    const computedContentItem = this.get("computedContent").findBy(
+      "value",
+      value
+    );
     Ember.get(computedContentItem, "originalContent.action")();
   },
 
@@ -79,9 +101,31 @@ export default DropdownSelectBox.extend({
       this.attrs.removeAfter(spammerDetails.deleteUser());
     },
 
+    showSuspendModal() {
+      let post = this.get("post");
+      let user = post.get("user");
+      this.get("adminTools").showSuspendModal(user, {
+        post,
+        before: () => {
+          return this.attrs.removeAfter(post.agreeFlags("suspended"));
+        }
+      });
+    },
+
+    showSilenceModal() {
+      let post = this.get("post");
+      let user = post.get("user");
+      this.get("adminTools").showSilenceModal(user, {
+        post,
+        before: () => {
+          return this.attrs.removeAfter(post.agreeFlags("silenced"));
+        }
+      });
+    },
+
     perform(action) {
       let flaggedPost = this.get("post");
       this.attrs.removeAfter(flaggedPost.agreeFlags(action));
-    },
+    }
   }
 });

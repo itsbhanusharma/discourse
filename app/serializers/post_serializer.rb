@@ -9,7 +9,8 @@ class PostSerializer < BasicPostSerializer
     :single_post_link_counts,
     :draft_sequence,
     :post_actions,
-    :all_post_actions
+    :all_post_actions,
+    :add_excerpt
   ]
 
   INSTANCE_VARS.each do |v|
@@ -69,7 +70,9 @@ class PostSerializer < BasicPostSerializer
              :is_auto_generated,
              :action_code,
              :action_code_who,
-             :last_wiki_edit
+             :last_wiki_edit,
+             :locked,
+             :excerpt
 
   def initialize(object, opts)
     super(object, opts)
@@ -81,7 +84,7 @@ class PostSerializer < BasicPostSerializer
   end
 
   def topic_slug
-    object.topic && object.topic.slug
+    topic&.slug
   end
 
   def include_topic_title?
@@ -96,16 +99,20 @@ class PostSerializer < BasicPostSerializer
     @add_title
   end
 
+  def include_excerpt?
+    @add_excerpt
+  end
+
   def topic_title
-    object.topic.title
+    topic&.title
   end
 
   def topic_html_title
-    object.topic.fancy_title
+    topic&.fancy_title
   end
 
   def category_id
-    object.topic.category_id
+    topic&.category_id
   end
 
   def moderator?
@@ -311,11 +318,11 @@ class PostSerializer < BasicPostSerializer
   end
 
   def user_custom_fields
-    @topic_view.user_custom_fields[object.user_id]
+    user_custom_fields_object[object.user_id]
   end
 
   def include_user_custom_fields?
-    (@topic_view&.user_custom_fields || {})[object.user_id]
+    user_custom_fields_object[object.user_id]
   end
 
   def static_doc
@@ -339,6 +346,8 @@ class PostSerializer < BasicPostSerializer
   end
 
   def version
+    return 1 if object.hidden && !scope.can_view_hidden_post_revisions?
+
     scope.is_staff? ? object.version : object.public_version
   end
 
@@ -354,6 +363,15 @@ class PostSerializer < BasicPostSerializer
     include_action_code? && action_code_who.present?
   end
 
+  def locked
+    true
+  end
+
+  # Only show locked posts to the users who made the post and staff
+  def include_locked?
+    object.locked? && (yours || scope.is_staff?)
+  end
+
   def last_wiki_edit
     object.revisions.last.updated_at
   end
@@ -364,22 +382,36 @@ class PostSerializer < BasicPostSerializer
     object.revisions.size > 0
   end
 
+  def include_hidden_reason_id?
+    object.hidden
+  end
+
   private
 
-    def post_actions
-      @post_actions ||= (@topic_view&.all_post_actions || {})[object.id]
-    end
+  def user_custom_fields_object
+    (@topic_view&.user_custom_fields || @options[:user_custom_fields] || {})
+  end
 
-    def active_flags
-      @active_flags ||= (@topic_view&.all_active_flags || {})[object.id]
-    end
+  def topic
+    @topic = object.topic
+    @topic ||= Topic.with_deleted.find_by(id: object.topic_id) if scope.is_staff?
+    @topic
+  end
 
-    def post_custom_fields
-      @post_custom_fields ||= if @topic_view
-        (@topic_view.post_custom_fields || {})[object.id] || {}
-      else
-        object.custom_fields
-      end
+  def post_actions
+    @post_actions ||= (@topic_view&.all_post_actions || {})[object.id]
+  end
+
+  def active_flags
+    @active_flags ||= (@topic_view&.all_active_flags || {})[object.id]
+  end
+
+  def post_custom_fields
+    @post_custom_fields ||= if @topic_view
+      (@topic_view.post_custom_fields || {})[object.id] || {}
+    else
+      object.custom_fields
     end
+  end
 
 end

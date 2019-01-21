@@ -35,9 +35,23 @@ describe InlineOneboxer do
       expect(result).to be_present
 
       cached = InlineOneboxer.cache_lookup(topic.url)
-      expect(cached).to be_present
       expect(cached[:url]).to eq(topic.url)
       expect(cached[:title]).to eq(topic.title)
+    end
+
+    it "puts an entry in the cache for failed onebox" do
+      SiteSetting.enable_inline_onebox_on_all_domains = true
+      url = "https://example.com/random-url"
+
+      InlineOneboxer.purge(url)
+      expect(InlineOneboxer.cache_lookup(url)).to be_blank
+
+      result = InlineOneboxer.lookup(url)
+      expect(result).to be_present
+
+      cached = InlineOneboxer.cache_lookup(url)
+      expect(cached[:url]).to eq(url)
+      expect(cached[:title]).to be_nil
     end
   end
 
@@ -71,11 +85,8 @@ describe InlineOneboxer do
     it "will crawl anything if allowed to" do
       SiteSetting.enable_inline_onebox_on_all_domains = true
 
-      # Final destination does a HEAD and a GET
-      stub_request(:head, "https://eviltrout.com/some-path").to_return(status: 200)
-
       stub_request(:get, "https://eviltrout.com/some-path").
-        to_return(status: 200, body: "<html><head><title>a blog</title></head></html>", headers: {})
+        to_return(status: 200, body: "<html><head><title>a blog</title></head></html>")
 
       onebox = InlineOneboxer.lookup(
         "https://eviltrout.com/some-path",
@@ -85,6 +96,22 @@ describe InlineOneboxer do
       expect(onebox).to be_present
       expect(onebox[:url]).to eq("https://eviltrout.com/some-path")
       expect(onebox[:title]).to eq("a blog")
+    end
+
+    it "will not return a onebox if it does not meet minimal length" do
+      SiteSetting.enable_inline_onebox_on_all_domains = true
+
+      stub_request(:get, "https://eviltrout.com/some-path").
+        to_return(status: 200, body: "<html><head><title>a</title></head></html>")
+
+      onebox = InlineOneboxer.lookup(
+        "https://eviltrout.com/some-path",
+        skip_cache: true
+      )
+
+      expect(onebox).to be_present
+      expect(onebox[:url]).to eq("https://eviltrout.com/some-path")
+      expect(onebox[:title]).to eq(nil)
     end
 
     it "will lookup whitelisted domains" do

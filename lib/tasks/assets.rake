@@ -94,7 +94,6 @@ def compress_ruby(from, to)
   data = File.read("#{assets_path}/#{from}")
 
   uglified, map = Uglifier.new(comments: :none,
-                               screw_ie8: true,
                                source_map: {
                                  filename: File.basename(from),
                                  output_filename: File.basename(to)
@@ -111,13 +110,13 @@ end
 
 def gzip(path)
   STDERR.puts "gzip -f -c -9 #{path} > #{path}.gz"
-  STDERR.puts `gzip -f -c -9 #{path} > #{path}.gz`
+  STDERR.puts `gzip -f -c -9 #{path} > #{path}.gz`.strip
   raise "gzip compression failed: exit code #{$?.exitstatus}" if $?.exitstatus != 0
 end
 
 if ENV['COMPRESS_BROTLI']&.to_i == 1
   # different brotli versions use different parameters
-  ver_out, ver_err, ver_status = Open3.capture3('brotli --version')
+  ver_out, _ver_err, ver_status = Open3.capture3('brotli --version')
   if !ver_status.success?
     # old versions of brotli don't respond to --version
     def brotli_command(path)
@@ -125,7 +124,7 @@ if ENV['COMPRESS_BROTLI']&.to_i == 1
     end
   elsif ver_out >= "brotli 1.0.0"
     def brotli_command(path)
-      "brotli --quality=11 #{path} --output=#{path}.br"
+      "brotli -f --quality=11 #{path} --output=#{path}.br"
     end
   else
     # not sure what to do here, not expecting this
@@ -138,7 +137,7 @@ def brotli(path)
     STDERR.puts brotli_command(path)
     STDERR.puts `#{brotli_command(path)}`
     raise "brotli compression failed: exit code #{$?.exitstatus}" if $?.exitstatus != 0
-    STDERR.puts `chmod +r #{path}.br`
+    STDERR.puts `chmod +r #{path}.br`.strip
     raise "chmod failed: exit code #{$?.exitstatus}" if $?.exitstatus != 0
   end
 end
@@ -152,9 +151,11 @@ def compress(from, to)
 end
 
 def concurrent?
+  executor = Concurrent::FixedThreadPool.new(Concurrent.processor_count)
+
   if ENV["SPROCKETS_CONCURRENT"] == "1"
     concurrent_compressors = []
-    yield(Proc.new { |&block| concurrent_compressors << Concurrent::Future.execute { block.call } })
+    yield(Proc.new { |&block| concurrent_compressors << Concurrent::Future.execute(executor: executor) { block.call } })
     concurrent_compressors.each(&:wait!)
   else
     yield(Proc.new { |&block| block.call })
@@ -180,9 +181,10 @@ task 'assets:precompile' => 'assets:precompile:before' do
           if File.exists?(_path)
             STDERR.puts "Skipping: #{file} already compressed"
           else
-            STDERR.puts "Compressing: #{file}"
-
             proc.call do
+              start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+              STDERR.puts "#{start} Compressing: #{file}"
+
               # We can specify some files to never minify
               unless (ENV["DONT_MINIFY"] == "1") || to_skip.include?(info['logical_path'])
                 FileUtils.mv(path, _path)
@@ -193,6 +195,9 @@ task 'assets:precompile' => 'assets:precompile:before' do
               info["mtime"] = File.mtime(path).iso8601
               gzip(path)
               brotli(path)
+
+              STDERR.puts "Done compressing #{file} : #{(Process.clock_gettime(Process::CLOCK_MONOTONIC) - start).round(2)} secs"
+              STDERR.puts
             end
           end
       end

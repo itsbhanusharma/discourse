@@ -47,6 +47,16 @@ describe CategoryList do
       expect(CategoryList.new(Guardian.new(nil), include_topics: true).categories.find { |x| x.name == private_cat.name }).to eq(nil)
     end
 
+    it "properly hide muted categories" do
+      cat_muted = Fabricate(:category)
+      CategoryUser.create!(user_id: user.id,
+                           category_id: cat_muted.id,
+                           notification_level: CategoryUser.notification_levels[:muted])
+
+      # uncategorized + cat_muted for admin
+      expect(CategoryList.new(Guardian.new admin).categories.count).to eq(2)
+      expect(CategoryList.new(Guardian.new user).categories.count).to eq(1)
+    end
   end
 
   context "with a category" do
@@ -78,6 +88,28 @@ describe CategoryList do
       it "returns topics in bumped_at order if pinned was unpinned" do
         PinnedCheck.stubs(:unpinned?).returns(true)
         expect(category.displayable_topics.map(&:id)).to eq([topic3.id, topic2.id])
+      end
+    end
+
+    context "notification level" do
+      it "returns 'regular' as default notification level" do
+        category = category_list.categories.find { |c| c.id == topic_category.id }
+        expect(category.notification_level).to eq(NotificationLevels.all[:regular])
+      end
+
+      it "returns the users notication level" do
+        CategoryUser.set_notification_level_for_category(user, NotificationLevels.all[:watching], topic_category.id)
+        category_list = CategoryList.new(Guardian.new(user))
+        category = category_list.categories.find { |c| c.id == topic_category.id }
+
+        expect(category.notification_level).to eq(NotificationLevels.all[:watching])
+      end
+
+      it "returns no notication level for anonymous users" do
+        category_list = CategoryList.new(Guardian.new(nil))
+        category = category_list.categories.find { |c| c.id == topic_category.id }
+
+        expect(category.notification_level).to be_nil
       end
     end
 

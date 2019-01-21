@@ -5,7 +5,11 @@
 {{/if}}
 
 <span class="selected-name" title={{title}}>
-  {{{name}}}
+  {{#if forceEscape}}
+    {{label}}
+  {{else}}
+    {{{label}}}
+  {{/if}}
 </span>
 
 {{#if computedContent.datetime}}
@@ -15,7 +19,7 @@
 {{/if}}
 
 {{#if shouldDisplayClearableButton}}
-  <button class="btn-clear" {{action onClear bubbles=false}}>
+  <button class="btn-clear" {{action onClearSelection bubbles=false}}>
     {{d-icon 'times'}}
   </button>
 {{/if}}

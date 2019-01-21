@@ -8,9 +8,10 @@ export default CategoryChooserComponent.extend({
   rootNoneLabel: "category.all",
   allowUncategorized: true,
   clearable: true,
+  permissionType: null,
 
   init() {
-    this._super();
+    this._super(...arguments);
 
     this.get("rowComponentOptions").setProperties({
       displayCategoryDescription: false
@@ -25,5 +26,7 @@ export default CategoryChooserComponent.extend({
     }
   },
 
-  computeValue(category) { if (category) return category.id; }
+  computeValue(category) {
+    if (category) return category.id;
+  }
 });

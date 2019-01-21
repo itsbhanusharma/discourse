@@ -1,8 +1,15 @@
 require_dependency 'enum'
 
 class SearchLog < ActiveRecord::Base
-  belongs_to :topic, foreign_key: :clicked_topic_id
-  validates_presence_of :term, :ip_address
+  validates_presence_of :term
+
+  attr_reader :ctr
+
+  def ctr
+    return 0 if click_through == 0 || searches == 0
+
+    ((click_through.to_f / searches.to_f) * 100).ceil(1)
+  end
 
   def self.search_types
     @search_types ||= Enum.new(
@@ -11,58 +18,130 @@ class SearchLog < ActiveRecord::Base
     )
   end
 
+  def self.search_result_types
+    @search_result_types ||= Enum.new(
+      topic: 1,
+      user: 2,
+      category: 3,
+      tag: 4
+    )
+  end
+
+  def self.redis_key(ip_address:, user_id: nil)
+    if user_id
+      "__SEARCH__LOG_#{user_id}"
+    else
+      "__SEARCH__LOG_#{ip_address}"
+    end
+  end
+
+  # for testing
+  def self.clear_debounce_cache!
+    $redis.keys("__SEARCH__LOG_*").each do |k|
+      $redis.del(k)
+    end
+  end
+
   def self.log(term:, search_type:, ip_address:, user_id: nil)
+
+    return [:error] if term.blank?
 
     search_type = search_types[search_type]
     return [:error] unless search_type.present? && ip_address.present?
 
-    update_sql = <<~SQL
-      UPDATE search_logs
-      SET term = :term,
-        created_at = :created_at
-      WHERE created_at > :timeframe AND
-        position(term IN :term) = 1 AND
-        ((:user_id IS NULL AND ip_address = :ip_address) OR
-          (user_id = :user_id))
-      RETURNING id
-    SQL
+    ip_address = nil if user_id
+    key = redis_key(user_id: user_id, ip_address: ip_address)
 
-    rows = exec_sql(
-      update_sql,
-      term: term,
-      created_at: Time.zone.now,
-      timeframe: 5.seconds.ago,
-      user_id: user_id,
-      ip_address: ip_address
-    )
+    result = nil
 
-    if rows.cmd_tuples == 0
-      result = create(
+    if existing = $redis.get(key)
+      id, old_term = existing.split(",", 2)
+
+      if term.start_with?(old_term)
+        where(id: id.to_i).update_all(
+          created_at: Time.zone.now,
+          term: term
+        )
+
+        result = [:updated, id.to_i]
+      end
+    end
+
+    if !result
+      log = self.create!(
         term: term,
         search_type: search_type,
         ip_address: ip_address,
         user_id: user_id
       )
-      [:created, result.id]
-    else
-      [:updated, rows[0]['id'].to_i]
+
+      result = [:created, log.id]
     end
+
+    $redis.setex(key, 5, "#{result[1]},#{term}")
+
+    result
   end
 
-  def self.trending(period = :all)
-    SearchLog.select("term,
-                       COUNT(*) AS searches,
-                       SUM(CASE
-                               WHEN clicked_topic_id IS NOT NULL THEN 1
-                               ELSE 0
-                           END) AS click_through,
-                       MODE() WITHIN GROUP (ORDER BY clicked_topic_id) AS clicked_topic_id,
-                       COUNT(DISTINCT ip_address) AS unique")
-      .includes(:topic)
+  def self.term_details(term, period = :weekly, search_type = :all)
+    details = []
+
+    result = SearchLog.select("COUNT(*) AS count, created_at::date AS date")
+      .where('term LIKE ?', term)
       .where('created_at > ?', start_of(period))
-      .group(:term)
-      .order('COUNT(DISTINCT ip_address) DESC')
-      .limit(100).to_a
+
+    result = result.where('search_type = ?', search_types[search_type]) if search_type == :header || search_type == :full_page
+    result = result.where('search_result_id IS NOT NULL') if search_type == :click_through_only
+
+    result.group(:term)
+      .order("date")
+      .group("date")
+      .each do |record|
+        details << { x: Date.parse(record['date'].to_s), y: record['count'] }
+      end
+
+    return {
+      type: "search_log_term",
+      title: I18n.t("search_logs.graph_title"),
+      start_date: start_of(period),
+      end_date: Time.zone.now,
+      data: details,
+      period: period.to_s
+    }
+  end
+
+  def self.trending(period = :all, search_type = :all)
+    SearchLog.trending_from(start_of(period), search_type: search_type)
+  end
+
+  def self.trending_from(start_date, options = {})
+    end_date = options[:end_date]
+    search_type = options[:search_type] || :all
+    limit = options[:limit] || 100
+
+    select_sql = <<~SQL
+      lower(term) term,
+      COUNT(*) AS searches,
+      SUM(CASE
+               WHEN search_result_id IS NOT NULL THEN 1
+               ELSE 0
+           END) AS click_through
+    SQL
+
+    result = SearchLog.select(select_sql)
+      .where('created_at > ?', start_date)
+
+    if end_date
+      result = result.where('created_at < ?', end_date)
+    end
+
+    unless search_type == :all
+      result = result.where('search_type = ?', search_types[search_type])
+    end
+
+    result.group('lower(term)')
+      .order('searches DESC, click_through DESC, term ASC')
+      .limit(limit)
   end
 
   def self.start_of(period)
@@ -81,6 +160,7 @@ class SearchLog < ActiveRecord::Base
     if search_id.present?
       SearchLog.where('id < ?', search_id[0]).delete_all
     end
+    SearchLog.where('created_at < TIMESTAMP ?', SiteSetting.search_query_log_max_retention_days.days.ago).delete_all
   end
 end
 
@@ -88,11 +168,12 @@ end
 #
 # Table name: search_logs
 #
-#  id               :integer          not null, primary key
-#  term             :string           not null
-#  user_id          :integer
-#  ip_address       :inet             not null
-#  clicked_topic_id :integer
-#  search_type      :integer          not null
-#  created_at       :datetime         not null
+#  id                 :integer          not null, primary key
+#  term               :string           not null
+#  user_id            :integer
+#  ip_address         :inet
+#  search_result_id   :integer
+#  search_type        :integer          not null
+#  created_at         :datetime         not null
+#  search_result_type :integer
 #

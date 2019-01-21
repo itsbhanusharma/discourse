@@ -1,15 +1,15 @@
-export default Em.Component.extend({
-  classNames: ['controls'],
+export default Ember.Component.extend({
+  classNames: ["controls"],
 
   label: function() {
-    return I18n.t(this.get('labelKey'));
-  }.property('labelKey'),
+    return I18n.t(this.get("labelKey"));
+  }.property("labelKey"),
 
   change() {
-    const warning = this.get('warning');
+    const warning = this.get("warning");
 
-    if (warning && this.get('checked')) {
-      this.sendAction('warning');
+    if (warning && this.get("checked")) {
+      this.warning();
       return false;
     }
 

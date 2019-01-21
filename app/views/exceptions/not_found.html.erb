@@ -11,7 +11,7 @@
           <%= link_to t.title, t.relative_url %><%= category_badge(t.category) %>
         </div>
       <% end %>
-      <a href="<%= path "/top" %>" class="btn"><%= t 'page_not_found.see_more' %>&hellip;</a>
+      <a href="<%= path "/top" %>" class="btn btn-default"><%= t 'page_not_found.see_more' %>&hellip;</a>
     </div>
     <div class="recent-topics">
       <h2 class="recent-topics-title"><%= t 'page_not_found.recent_topics' %></h2>
@@ -20,32 +20,23 @@
           <%= link_to t.title, t.relative_url %><%= category_badge(t.category) %>
         </div>
       <% end %>
-      <a href="<%= path "/latest" %>" class="btn"><%= t 'page_not_found.see_more' %>&hellip;</a>
+      <a href="<%= path "/latest" %>" class="btn btn-default"><%= t 'page_not_found.see_more' %>&hellip;</a>
     </div>
   </div>
 <% end %>
 
-<%- unless @hide_google %>
-  <% local_domain = "#{request.protocol}#{request.host_with_port}" %>
-
+<%- unless @hide_search%>
   <div class="row">
     <div class="page-not-found-search">
       <h2><%= t 'page_not_found.search_title' %></h2>
       <p>
-        <form action='//google.com/search' id='google-search'>
+        <form action='/search' id='discourse-search'>
           <input type="text" name="q" value="<%= @slug %>">
-          <input type='hidden' name="as_sitesearch" value="<%= local_domain %>">
-          <button class="btn btn-primary"><%= t 'page_not_found.search_google' %></button>
+          <button class="btn btn-primary"><%= t 'page_not_found.search_button' %></button>
         </form>
       </p>
     </div>
   </div>
 
-  <script language="Javascript">
-    window.onpopstate = function(event) {
-      if (event.state && !window.hasOwnProperty("Discourse")) {  //check if Discourse object exists if not take care of back navigation
-        window.location = document.location;
-      }
-    };
-  </script>
+  <%= preload_script('onpopstate-handler') %>
 <%- end %>

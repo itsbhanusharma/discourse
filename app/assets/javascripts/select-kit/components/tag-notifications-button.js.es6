@@ -9,7 +9,7 @@ export default NotificationOptionsComponent.extend({
   allowInitialValueMutation: false,
 
   mutateValue(value) {
-    this.sendAction("action", value);
+    this.action(value);
   },
 
   computeValue() {
@@ -18,6 +18,6 @@ export default NotificationOptionsComponent.extend({
 
   @computed("iconForSelectedDetails")
   headerIcon(iconForSelectedDetails) {
-    return [iconForSelectedDetails, "caret-down"];
+    return iconForSelectedDetails;
   }
 });

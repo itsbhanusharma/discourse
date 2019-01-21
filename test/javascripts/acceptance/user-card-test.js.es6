@@ -1,14 +1,16 @@
 import { acceptance } from "helpers/qunit-helpers";
+import DiscourseURL from "discourse/lib/url";
+
 acceptance("User Card");
 
-QUnit.test("card", assert => {
-  visit('/');
+QUnit.test("user card", async assert => {
+  await visit("/");
+  assert.ok(invisible("#user-card"), "user card is invisible by default");
 
-  assert.ok(invisible('#user-card'), 'user card is invisible by default');
-  click('a[data-user-card=eviltrout]:first');
+  await click("a[data-user-card=eviltrout]:first");
+  assert.ok(visible("#user-card"), "card should appear");
 
-  andThen(() => {
-    assert.ok(visible('#user-card'), 'card should appear');
-  });
-
+  sandbox.stub(DiscourseURL, "routeTo");
+  await click(".card-content a.mention");
+  assert.ok(DiscourseURL.routeTo.calledWith("/u/eviltrout"));
 });

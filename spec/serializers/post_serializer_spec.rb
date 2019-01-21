@@ -29,10 +29,10 @@ describe PostSerializer do
     end
 
     it "displays the correct info" do
-      expect(visible_actions_for(actor).sort).to eq([:like, :notify_user, :spam, :vote])
-      expect(visible_actions_for(post.user).sort).to eq([:like, :vote])
-      expect(visible_actions_for(nil).sort).to eq([:like, :vote])
-      expect(visible_actions_for(admin).sort).to eq([:like, :notify_user, :spam, :vote])
+      expect(visible_actions_for(actor).sort).to eq([:like, :notify_user, :spam])
+      expect(visible_actions_for(post.user).sort).to eq([:like])
+      expect(visible_actions_for(nil).sort).to eq([:like])
+      expect(visible_actions_for(admin).sort).to eq([:like, :notify_user, :spam])
     end
 
     it "can't flag your own post to notify yourself" do
@@ -80,7 +80,7 @@ describe PostSerializer do
   end
 
   context "a hidden post with add_raw enabled" do
-    let(:user) { Fabricate.build(:user) }
+    let(:user) { Fabricate.build(:user, id: 101) }
     let(:raw)  { "Raw contents of the post." }
 
     def serialized_post_for_user(u)
@@ -121,6 +121,27 @@ describe PostSerializer do
       end
     end
 
+    context "a hidden revised post" do
+      let(:post) { Fabricate(:post, raw: 'Hello world!', hidden: true) }
+
+      before do
+        SiteSetting.editing_grace_period_max_diff = 1
+
+        revisor = PostRevisor.new(post)
+        revisor.revise!(post.user, raw: 'Hello, everyone!')
+      end
+
+      it "will not leak version to users" do
+        json = PostSerializer.new(post, scope: Guardian.new(user), root: false).as_json
+        expect(json[:version]).to eq(1)
+      end
+
+      it "will show real version to staff" do
+        json = PostSerializer.new(post, scope: Guardian.new(Fabricate(:admin)), root: false).as_json
+        expect(json[:version]).to eq(2)
+      end
+    end
+
     context "a public wiki post" do
       let(:post) { Fabricate.build(:post, raw: raw, user: user, wiki: true) }
 
@@ -132,12 +153,19 @@ describe PostSerializer do
     end
 
     context "a hidden wiki post" do
-      let(:post) { Fabricate.build(:post, raw: raw, user: user, wiki: true, hidden: true, hidden_reason_id: Post.hidden_reasons[:flag_threshold_reached]) }
+      let(:post) {
+        Fabricate.build(
+          :post,
+          raw: raw,
+          user: user,
+          wiki: true,
+          hidden: true,
+          hidden_reason_id: Post.hidden_reasons[:flag_threshold_reached])
+      }
 
       it "can view edit history only if authorized" do
         expect(serialized_post_for_user(nil)[:can_view_edit_history]).to eq(false)
         expect(serialized_post_for_user(Fabricate(:user))[:can_view_edit_history]).to eq(false)
-
         expect(serialized_post_for_user(user)[:can_view_edit_history]).to eq(true)
         expect(serialized_post_for_user(Fabricate(:moderator))[:can_view_edit_history]).to eq(true)
         expect(serialized_post_for_user(Fabricate(:admin))[:can_view_edit_history]).to eq(true)

@@ -4,11 +4,25 @@ require 'digest/sha1'
 class UserAuthToken < ActiveRecord::Base
   belongs_to :user
 
+  # TODO 2019: remove this line
+  self.ignored_columns = ["legacy"]
+
   ROTATE_TIME = 10.minutes
   # used when token did not arrive at client
   URGENT_ROTATE_TIME = 1.minute
 
+  USER_ACTIONS = ['generate']
+
   attr_accessor :unhashed_auth_token
+
+  before_destroy do
+    UserAuthToken.log(action: 'destroy',
+                      user_auth_token_id: self.id,
+                      user_id: self.user_id,
+                      user_agent: self.user_agent,
+                      client_ip: self.client_ip,
+                      auth_token: self.auth_token)
+  end
 
   def self.log(info)
     if SiteSetting.verbose_auth_token_logging
@@ -16,13 +30,49 @@ class UserAuthToken < ActiveRecord::Base
     end
   end
 
-  def self.generate!(info)
+  RAD_PER_DEG = Math::PI / 180
+  EARTH_RADIUS_KM = 6371 # kilometers
+
+  def self.login_location(ip)
+    ipinfo = DiscourseIpInfo.get(ip)
+
+    ipinfo[:latitude] && ipinfo[:longitude] ? [ipinfo[:latitude], ipinfo[:longitude]] : nil
+  end
+
+  def self.distance(loc1, loc2)
+    lat1_rad, lon1_rad = loc1[0] * RAD_PER_DEG, loc1[1] * RAD_PER_DEG
+    lat2_rad, lon2_rad = loc2[0] * RAD_PER_DEG, loc2[1] * RAD_PER_DEG
+
+    a = Math.sin((lat2_rad - lat1_rad) / 2)**2 + Math.cos(lat1_rad) * Math.cos(lat2_rad) * Math.sin((lon2_rad - lon1_rad) / 2)**2
+    c = 2 * Math::atan2(Math::sqrt(a), Math::sqrt(1 - a))
+
+    c * EARTH_RADIUS_KM
+  end
+
+  def self.is_suspicious(user_id, user_ip)
+    return false unless User.find_by(id: user_id)&.staff?
+
+    ips = UserAuthTokenLog.where(user_id: user_id).pluck(:client_ip)
+    ips.delete_at(ips.index(user_ip) || ips.length) # delete one occurance (current)
+    ips.uniq!
+    return false if ips.empty? # first login is never suspicious
+
+    if user_location = login_location(user_ip)
+      ips.none? do |ip|
+        if location = login_location(ip)
+          distance(user_location, location) < SiteSetting.max_suspicious_distance_km
+        end
+      end
+    end
+  end
+
+  def self.generate!(user_id: , user_agent: nil, client_ip: nil, path: nil, staff: nil, impersonate: false)
     token = SecureRandom.hex(16)
     hashed_token = hash_token(token)
     user_auth_token = UserAuthToken.create!(
-      user_id: info[:user_id],
-      user_agent: info[:user_agent],
-      client_ip: info[:client_ip],
+      user_id: user_id,
+      user_agent: user_agent,
+      client_ip: client_ip,
       auth_token: hashed_token,
       prev_auth_token: hashed_token,
       rotated_at: Time.zone.now
@@ -31,26 +81,31 @@ class UserAuthToken < ActiveRecord::Base
 
     log(action: 'generate',
         user_auth_token_id: user_auth_token.id,
-        user_id: info[:user_id],
-        user_agent: info[:user_agent],
-        client_ip: info[:client_ip],
-        path: info[:path],
+        user_id: user_id,
+        user_agent: user_agent,
+        client_ip: client_ip,
+        path: path,
         auth_token: hashed_token)
+
+    if staff && !impersonate
+      Jobs.enqueue(:suspicious_login,
+        user_id: user_id,
+        client_ip: client_ip,
+        user_agent: user_agent)
+    end
 
     user_auth_token
   end
 
   def self.lookup(unhashed_token, opts = nil)
-
     mark_seen = opts && opts[:seen]
 
     token = hash_token(unhashed_token)
     expire_before = SiteSetting.maximum_session_age.hours.ago
 
     user_token = find_by("(auth_token = :token OR
-                          prev_auth_token = :token OR
-                          (auth_token = :unhashed_token AND legacy)) AND rotated_at > :expire_before",
-                          token: token, unhashed_token: unhashed_token, expire_before: expire_before)
+                          prev_auth_token = :token) AND rotated_at > :expire_before",
+                          token: token, expire_before: expire_before)
 
     if !user_token
 
@@ -129,7 +184,7 @@ class UserAuthToken < ActiveRecord::Base
 
     token = SecureRandom.hex(16)
 
-    result = UserAuthToken.exec_sql("
+    result = DB.exec("
   UPDATE user_auth_tokens
   SET
     auth_token_seen = false,
@@ -148,7 +203,7 @@ class UserAuthToken < ActiveRecord::Base
    safeguard_time: 30.seconds.ago
   )
 
-    if result.cmdtuples > 0
+    if result > 0
       reload
       self.unhashed_auth_token = token
 
@@ -180,7 +235,6 @@ end
 #  prev_auth_token :string           not null
 #  user_agent      :string
 #  auth_token_seen :boolean          default(FALSE), not null
-#  legacy          :boolean          default(FALSE), not null
 #  client_ip       :inet
 #  rotated_at      :datetime         not null
 #  created_at      :datetime         not null

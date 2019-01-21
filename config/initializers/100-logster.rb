@@ -1,3 +1,14 @@
+if Rails.env.development? && !Sidekiq.server? && ENV["RAILS_LOGS_STDOUT"] == "1"
+  console = ActiveSupport::Logger.new(STDOUT)
+  original_logger = Rails.logger.chained.first
+  console.formatter = original_logger.formatter
+  console.level = original_logger.level
+
+  unless ActiveSupport::Logger.logger_outputs_to?(original_logger, STDOUT)
+    original_logger.extend(ActiveSupport::Logger.broadcast(console))
+  end
+end
+
 if Rails.env.production?
   Logster.store.ignore = [
     # honestly, Rails should not be logging this, its real noisy
@@ -32,7 +43,22 @@ if Rails.env.production?
     /^ActiveRecord::RecordNotFound/,
 
     # bad asset requested, no need to log
-    /^ActionController::BadRequest/
+    /^ActionController::BadRequest/,
+
+    # we can't do anything about invalid parameters
+    /Rack::QueryParser::InvalidParameterError/,
+
+    # we handle this cleanly in the message bus middleware
+    # no point logging to logster
+    /RateLimiter::LimitExceeded.*/m,
+
+    # see https://github.com/rails/rails/issues/34599
+    # Poll defines an enum with the value `open` ActiveRecord then attempts
+    # AR then warns cause #open is being redefined, it is already defined
+    # privately in Kernel per: http://ruby-doc.org/core-2.5.3/Kernel.html#method-i-open
+    # Once the rails issue is fixed we can stop this error suppression and stop defining
+    # scopes for the enums
+    /^Creating scope :open\. Overwriting existing method Poll\.open\./,
   ]
 end
 
@@ -68,7 +94,14 @@ RailsMultisite::ConnectionManagement.each_connection do
 
   if (error_rate_per_minute || 0) > 0
     store.register_rate_limit_per_minute(severities, error_rate_per_minute) do |rate|
-      MessageBus.publish("/logs_error_rate_exceeded", rate: rate, duration: 'minute', publish_at: Time.current.to_i)
+      MessageBus.publish("/logs_error_rate_exceeded",
+        {
+          rate: rate,
+          duration: 'minute',
+          publish_at: Time.current.to_i
+        },
+        group_ids: [Group::AUTO_GROUPS[:admins]]
+      )
     end
   end
 
@@ -76,12 +109,19 @@ RailsMultisite::ConnectionManagement.each_connection do
 
   if (error_rate_per_hour || 0) > 0
     store.register_rate_limit_per_hour(severities, error_rate_per_hour) do |rate|
-      MessageBus.publish("/logs_error_rate_exceeded", rate: rate, duration: 'hour', publish_at: Time.current.to_i)
+      MessageBus.publish("/logs_error_rate_exceeded",
+        {
+          rate: rate,
+          duration: 'hour',
+          publish_at: Time.current.to_i,
+        },
+        group_ids: [Group::AUTO_GROUPS[:admins]]
+      )
     end
   end
 end
 
 if Rails.configuration.multisite
-  chained = Rails.logger.instance_variable_get(:@chained)
+  chained = Rails.logger.chained
   chained && chained.first.formatter = RailsMultisite::Formatter.new
 end

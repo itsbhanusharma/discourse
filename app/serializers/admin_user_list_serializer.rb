@@ -1,6 +1,7 @@
 class AdminUserListSerializer < BasicUserSerializer
 
   attributes :email,
+             :secondary_emails,
              :active,
              :admin,
              :moderator,
@@ -12,7 +13,7 @@ class AdminUserListSerializer < BasicUserSerializer
              :created_at_age,
              :username_lower,
              :trust_level,
-             :trust_level_locked,
+             :manual_locked_trust_level,
              :flag_level,
              :username,
              :title,
@@ -25,7 +26,8 @@ class AdminUserListSerializer < BasicUserSerializer
              :silenced,
              :silenced_till,
              :time_read,
-             :staged
+             :staged,
+             :second_factor_enabled
 
   [:days_visited, :posts_read_count, :topics_entered, :post_count].each do |sym|
     attributes sym
@@ -36,10 +38,11 @@ class AdminUserListSerializer < BasicUserSerializer
 
   def include_email?
     # staff members can always see their email
-    (scope.is_staff? && object.id == scope.user.id) || scope.can_see_emails? ||
-      (scope.is_staff? && object.staged?)
+    (scope.is_staff? && (object.id == scope.user.id || object.staged?)) ||
+      (@options[:emails_desired] && scope.can_check_emails?(object))
   end
 
+  alias_method :include_secondary_emails?, :include_email?
   alias_method :include_associated_accounts?, :include_email?
 
   def silenced
@@ -113,6 +116,14 @@ class AdminUserListSerializer < BasicUserSerializer
 
   def include_approved?
     SiteSetting.must_approve_users
+  end
+
+  def include_second_factor_enabled?
+    object.totp_enabled?
+  end
+
+  def second_factor_enabled
+    true
   end
 
 end

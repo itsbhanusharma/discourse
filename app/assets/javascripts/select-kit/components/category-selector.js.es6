@@ -7,15 +7,22 @@ export default MultiSelectComponent.extend({
   filterable: true,
   allowAny: false,
   rowComponent: "category-row",
+  categories: null,
+  blacklist: null,
+  allowUncategorized: true,
 
   init() {
-    this._super();
+    this._super(...arguments);
+
+    if (!this.get("categories")) this.set("categories", []);
+    if (!this.get("blacklist")) this.set("blacklist", []);
 
     this.get("headerComponentOptions").setProperties({
       selectedNameComponent: "multi-select/selected-category"
     });
 
     this.get("rowComponentOptions").setProperties({
+      allowUncategorized: this.get("allowUncategorized"),
       displayCategoryDescription: false
     });
   },
@@ -29,12 +36,19 @@ export default MultiSelectComponent.extend({
   },
 
   filterComputedContent(computedContent, computedValues, filter) {
-    const regex = new RegExp(filter.toLowerCase(), 'i');
-    return computedContent.filter(category => Ember.get(category, "name").match(regex));
+    const regex = new RegExp(filter, "i");
+    return computedContent.filter(category =>
+      this._normalize(Ember.get(category, "name")).match(regex)
+    );
   },
 
   computeContent() {
     const blacklist = Ember.makeArray(this.get("blacklist"));
-    return Category.list().filter(category => !blacklist.includes(category));
+    return Category.list().filter(category => {
+      return (
+        this.get("categories").includes(category) ||
+        !blacklist.includes(category)
+      );
+    });
   }
 });

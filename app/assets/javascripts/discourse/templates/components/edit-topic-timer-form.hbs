@@ -7,9 +7,10 @@
     {{#if showTimeOnly}}
       {{future-date-input
           input=topicTimer.updateTime
+          label="topic.topic_status_update.when"
           statusType=selection
           includeWeekend=true
-          basedOnLastPost=false}}
+          basedOnLastPost=topicTimer.based_on_last_post}}
     {{else if publishToCategory}}
       <div class="control-group">
         <label>{{i18n 'topic.topic_status_update.publish_to'}}</label>
@@ -20,13 +21,15 @@
 
       {{future-date-input
           input=topicTimer.updateTime
+          label="topic.topic_status_update.when"
           statusType=selection
           includeWeekend=true
           categoryId=topicTimer.category_id
-          basedOnLastPost=false}}
+          basedOnLastPost=topicTimer.based_on_last_post}}
     {{else if autoClose}}
       {{future-date-input
           input=topicTimer.updateTime
+          label="topic.topic_status_update.when"
           statusType=selection
           includeWeekend=true
           basedOnLastPost=topicTimer.based_on_last_post

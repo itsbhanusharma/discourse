@@ -46,15 +46,14 @@ body {
   @include clearfix;
 }
 
+// setting a static limit on big and small prevents nesting abuse
 big {
-  font-size: 28px;
+  font-size: $font-up-5;
 }
-
 small {
-  font-size: 9px;
+  font-size: $font-down-2;
 }
 
-//setting a static limit on big and small prevents nesting abuse
 blockquote {
   @include post-aside;
   clear: both;
@@ -67,7 +66,7 @@ h4,
 h5,
 h6 {
   margin-top: 0;
-  margin-bottom: .5rem;
+  margin-bottom: 0.5rem;
 }
 
 button {
@@ -108,20 +107,24 @@ img.avatar {
 //                                                      26,
 //                                                      '15
 span.relative-date {
-  white-space:nowrap;
+  white-space: nowrap;
 }
 
 label {
-  display: block;
+  display: flex;
   margin-bottom: 5px;
+  align-items: flex-start;
 }
 
 input {
   &[type="radio"],
   &[type="checkbox"] {
-    margin: 3px 0;
-    line-height: normal;
+    margin-top: 0.17em;
+    margin-right: 0.43em;
+    margin-left: 0.1em;
+    line-height: $line-height-small;
     cursor: pointer;
+    flex-shrink: 0; // Adding for safety, Safari will shrink checkboxes
   }
   &[type="submit"],
   &[type="reset"],
@@ -132,7 +135,10 @@ input {
   }
 
   &.invalid {
-    background-color: dark-light-choose($danger-low, scale-color($danger, $lightness: -60%));
+    background-color: dark-light-choose(
+      $danger-low,
+      scale-color($danger, $lightness: -60%)
+    );
   }
 
   .radio &[type="radio"],
@@ -166,7 +172,7 @@ textarea {
 
   &:focus:required:invalid:focus {
     border-color: $danger;
-    box-shadow: 0 0 6px $danger;
+    box-shadow: shadow("focus-danger");
   }
 }
 
@@ -185,42 +191,85 @@ input {
   &[type="search"],
   &[type="tel"],
   &[type="color"] {
+    @include appearance-none;
     display: inline-block;
-    height: 18px;
-    padding: 4px;
+    padding: $input-padding;
     margin-bottom: 9px;
-    font-size: 0.929em;
-    line-height: 18px;
+    font-size: $font-0;
+    line-height: $line-height-small;
     color: $primary;
     background-color: $secondary;
-    border: 1px solid $primary-low;
-    border-radius: 3px;
-    box-shadow: inset 0 1px 1px rgba(0,0,0, .3);
-
+    border: 1px solid $primary-medium;
+    border-radius: 0;
+    box-sizing: border-box;
+    min-height: 30px;
     &:focus {
       border-color: $tertiary;
+      box-shadow: shadow("focus");
       outline: 0;
-      box-shadow: inset 0 1px 1px rgba(0,0,0, .3), 0 0 8px $tertiary;
+    }
+  }
+}
+
+.input {
+  &-prepend,
+  &-append {
+    margin-bottom: 5px;
+    input[class*="span"] {
+      display: inline-block;
+    }
+    input,
+    select {
+      position: relative;
+      margin-bottom: 0;
+      vertical-align: middle;
+      border-radius: 0;
+      &:focus {
+        z-index: z("base") + 1;
+      }
+    }
+    .add-on {
+      display: inline-flex;
+      align-items: center;
+      width: auto;
+      padding: 0 0.5em;
+      height: 28px;
+      background-color: $primary-low;
+      border: 1px solid $primary-medium;
+    }
+    .add-on,
+    .btn {
+      &:first-child {
+        margin-right: -1px;
+      }
+      &:last-child {
+        margin-left: -1px;
+        border-radius: 0 3px 3px 0;
+      }
+    }
+  }
+
+  &-prepend {
+    .add-on,
+    .btn {
+      margin-right: -1px;
     }
   }
 }
 
 textarea {
   height: auto;
-  background-color:$secondary;
-  border: 1px solid $primary-low;
-  border-radius: 3px;
-  box-shadow: inset 0 1px 1px rgba(0,0,0, .3);
-
+  background-color: $secondary;
+  border: 1px solid $primary-medium;
   &:focus {
     border-color: $tertiary;
+    box-shadow: shadow("focus");
     outline: 0;
-    box-shadow: inset 0 1px 1px rgba(0,0,0, .3), 0 0 8px $tertiary;
   }
 }
 
 select {
-  border: 1px solid $primary-low;  
+  border: 1px solid $primary-low;
 }
 
 // Common Classes
@@ -276,7 +325,7 @@ select {
 // numbers get dimmer as they get colder
 .coldmap {
   &-high {
-  color: dark-light-choose($primary-low-mid, $secondary-high) !important;
+    color: dark-light-choose($primary-low-mid, $secondary-high) !important;
   }
 
   &-med {
@@ -293,7 +342,7 @@ select {
 }
 
 .message {
-  @include border-radius-all(8px);
+  border-radius: 8px;
   background-color: $secondary;
   padding: 14px;
 
@@ -303,7 +352,7 @@ select {
 }
 
 .clear-transitions {
-  transition:none !important;
+  transition: none !important;
 }
 
 .tip {
@@ -314,10 +363,6 @@ select {
   &.bad {
     color: $danger;
   }
-}
-
-.d-editor-input {
-  resize: none;
 }
 
 .avatar-wrapper {
@@ -350,7 +395,11 @@ select {
   height: 80px;
   top: -18px;
   right: -18px;
-  background-image: radial-gradient(40px at 50% 50% , transparent 95%, $primary 100%);
+  background-image: radial-gradient(
+    40px at 50% 50%,
+    transparent 95%,
+    $primary 100%
+  );
   opacity: 0.85;
 }
 
@@ -361,7 +410,7 @@ select {
   top: -18px !important;
   right: -18px !important;
   box-shadow: 0 0 0 9999px rgba($primary, 0.85);
-  z-index: 1040;
+  z-index: z("modal", "overlay");
 }
 
 .ring-first-notification {
@@ -371,7 +420,7 @@ select {
   right: 70px;
   top: 60px;
   width: 230px;
-  line-height: 30px;
+  line-height: $line-height-medium;
 }
 
 .ring {
@@ -431,7 +480,7 @@ select {
 .content-list {
   h3 {
     color: $primary-medium;
-    font-size: 1.071em;
+    font-size: $font-up-1;
     padding-left: 5px;
     margin-bottom: 10px;
   }
@@ -474,16 +523,32 @@ select {
   .input-append {
     display: inline-block;
     margin-bottom: 0;
+    flex: 0 0 auto;
   }
 
   .control-group {
     @include clearfix;
+
+    .table {
+      width: 100%;
+
+      th,
+      td {
+        padding: 10px;
+        text-align: center;
+      }
+    }
+
+    &.highlighted {
+      animation: background-fade-highlight 2.5s ease-out;
+      background-color: dark-light-choose($highlight-low, $highlight);
+    }
   }
 
   .control-label {
     font-weight: bold;
-    font-size: 1.2em;
-    line-height: 2;
+    font-size: $font-up-2;
+    line-height: $line-height-large;
   }
 
   .controls {
@@ -525,7 +590,7 @@ select {
 
 #loading-message {
   position: absolute;
-  font-size: 2.143em;
+  font-size: $font-up-5;
   text-align: center;
   top: 120px;
   left: 500px;
@@ -541,5 +606,87 @@ select {
         color: $secondary;
       }
     }
+  }
+}
+
+.inline {
+  display: inline;
+}
+
+.pref-auth-tokens {
+  .row {
+    border-bottom: 1px solid #ddd;
+    margin: 5px 0px;
+    padding-bottom: 5px;
+
+    &:last-child {
+      border-bottom: 0;
+    }
+  }
+
+  .auth-token-icon {
+    font-size: 2.25em;
+    float: left;
+    margin-right: 10px;
+  }
+
+  .auth-token-first {
+    font-size: 1.1em;
+
+    .auth-token-device {
+      font-weight: bold;
+    }
+  }
+
+  .auth-token-second {
+    color: $primary-medium;
+
+    .active {
+      color: $success;
+      font-weight: bold;
+    }
+  }
+
+  .auth-token-dropdown {
+    float: right;
+
+    .btn,
+    .btn:hover {
+      background: transparent;
+
+      .d-icon {
+        color: $primary;
+      }
+    }
+  }
+
+  .dropdown-menu {
+    width: 120px;
+
+    & .icon {
+      margin-top: auto;
+    }
+  }
+}
+
+.topic-statuses {
+  display: inline;
+  float: left;
+  margin-right: 0.15em;
+  .topic-status {
+    margin: 0;
+    display: inline-flex;
+    color: $primary-medium;
+    .d-icon {
+      height: 0.76em;
+      width: 0.75em;
+    }
+    &:not(:last-child) {
+      margin-right: 0.15em;
+    }
+  }
+
+  .d-icon-envelope {
+    color: $danger;
   }
 }

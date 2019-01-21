@@ -16,7 +16,9 @@ gl:
       short_no_year: "%-d de %B"
       date_only: "%-d de %B, %Y"
   date:
-    month_names: [null, Xaneiro, Febreiro, Marzo, Abril, Maio, Xuño, Xullo, Agosto, Setembro, Outubro, Novembro, Decembro]
+    month_names: [~, Xaneiro, Febreiro, Marzo, Abril, Maio, Xuño, Xullo, Agosto, Setembro, Outubro, Novembro, Decembro]
+    <<: *datetime_formats
+  time:
     <<: *datetime_formats
   title: "Discourse"
   topics: "Temas"
@@ -25,7 +27,7 @@ gl:
   log_in: "Iniciar sesión"
   anonymous: "Anónimo"
   errors: &errors
-    format: '%{attribute} %{message}'
+    format: "%{attribute} %{message}"
     messages:
       taken: "xa está en uso"
       accepted: debe ser aceptado
@@ -33,19 +35,19 @@ gl:
       present: debe quedar baleiro
       confirmation: "%{attribute} non coincide"
       empty: non pode quedar baleiro
-      equal_to: debe ser igual a %{count}
+      equal_to: "debe ser igual a %{count}"
       exclusion: está reservado
-      greater_than: debe ser maior de %{count}
-      greater_than_or_equal_to: debe ser igual ou maior de %{count}
+      greater_than: "debe ser maior de %{count}"
+      greater_than_or_equal_to: "debe ser igual ou maior de %{count}"
       has_already_been_used: "xa está en uso"
       inclusion: no está incluído na lista
       invalid: é incorrecto
-      less_than: debe ser menor de %{count}
-      less_than_or_equal_to: debe ser igual ou menor de %{count}
+      less_than: "debe ser menor de %{count}"
+      less_than_or_equal_to: "debe ser igual ou menor de %{count}"
       not_a_number: non é un número
       not_an_integer: debe ser un enteiro
       odd: debe ser impar
-      record_invalid: 'Fallou a validación: %{errors}'
+      record_invalid: "Fallou a validación: %{errors}"
       restrict_dependent_destroy:
         one: "Non é posíbel eliminalo porque existe outro %{record} dependente"
         many: "Non é posíbel eliminalo porque existen outros %{record} dependentes"
@@ -57,11 +59,12 @@ gl:
         other: demasiado curto (mínimo %{count} caracteres)
       other_than: "debe ser distinto de %{count}"
     template:
-      body: 'Producíronse problemas cos seguintes campos:'
+      body: "Producíronse problemas cos seguintes campos:"
     embed:
       load_from_remote: "Produciuse un erro cargando esta publicación."
-    site_settings:
-      min_username_length_range: "O mínimo non pode ser maior que o máximo."
+  activemodel:
+    errors:
+      <<: *errors
   not_logged_in: "Debes iniciar sesión para facer iso."
   not_found: "Non foi posíbel atopar o recurso ou URL solicitado."
   invalid_access: "Non se che permite ver o recurso solicitado."
@@ -77,9 +80,6 @@ gl:
     loading: "Cargando a discusión..."
     permalink: "Ligazón permanente"
     in_reply_to: "▶ %{username}"
-    replies:
-      one: "Unha resposta"
-      other: "%{count} respostas"
   no_mentions_allowed: "Sentímolo pero non podes mencionar outros usuarios"
   invalid_characters: "contén caracteres incorrectos"
   next_page: "páxina seguinte →"
@@ -124,11 +124,11 @@ gl:
       user_profile:
         bio_raw: "Verbo de min"
     errors:
+      <<: *errors
       models:
         topic:
           attributes:
             base:
-              warning_requires_pm: "Só podes anexar avisos a mensaxes privadas."
               no_user_selected: "Debes seleccionar un usuario correcto."
         user:
           attributes:
@@ -142,7 +142,6 @@ gl:
           attributes:
             hex:
               invalid: "non é unha cor válida"
-      <<: *errors
   vip_category_name: "Taberna"
   vip_category_description: "Unha categoría exclusiva para membros cun nivel de confianza igual ou maior a 3."
   meta_category_name: "Opinións sobre o sitio"
@@ -206,9 +205,9 @@ gl:
     distance_in_words_verbose:
       half_a_minute: "agora mesmiño"
   password_reset:
-    update: 'Actualizar contrasinal'
-    save: 'Estabelecer o contrasinal'
-    title: 'Contrasinal restabelecido'
+    update: "Actualizar contrasinal"
+    save: "Estabelecer o contrasinal"
+    title: "Contrasinal restabelecido"
   change_email:
     confirmed: "O teu correo electrónico foi actualizado."
     please_continue: "Continuar a %{site_name}"
@@ -219,41 +218,37 @@ gl:
     welcome_to: "Benvido/a a %{site_name}!"
   post_action_types:
     off_topic:
-      title: 'Sen-relación'
-      long_form: 'marcou isto como non relacionado'
+      title: "Sen-relación"
+      long_form: "marcou isto como non relacionado"
     spam:
-      title: 'Spam'
-      long_form: 'denunciou isto como spam'
+      title: "Spam"
+      long_form: "denunciou isto como spam"
     inappropriate:
-      title: 'Inapropiado'
-      long_form: 'denunciou isto como inapropiado'
+      title: "Inapropiado"
+      long_form: "denunciou isto como inapropiado"
     notify_moderators:
       title: "Algo máis"
-      description: 'Esta publicación require a atención dos responsábeis do sitio por unha razón non listada arriba.'
-      long_form: 'denunciou isto para revisión polo equipo'
+      description: "Esta publicación require a atención dos responsábeis do sitio por unha razón non listada arriba."
+      long_form: "denunciou isto para revisión polo equipo"
       email_title: 'Unha publicación en «%{title}» require a atención dos responsábeis do sitio'
     bookmark:
-      title: 'Marcador'
-      description: 'Marcar esta publicación'
-      long_form: 'Marcar este tema'
+      title: "Marcador"
+      description: "Marcar esta publicación"
+      long_form: "Marcar este tema"
     like:
-      title: 'Gústame'
-      description: 'Gústame esta publicación'
-      long_form: 'gustoume isto'
-    vote:
-      title: 'Votar'
-      description: 'Votar por esta publicación'
-      long_form: 'votei esta publicación'
+      title: "Gústame"
+      description: "Gústame esta publicación"
+      long_form: "gustoume isto"
   topic_flag_types:
     spam:
-      title: 'Spam'
-      long_form: 'denunciou isto como spam'
+      title: "Spam"
+      long_form: "denunciou isto como spam"
     inappropriate:
-      title: 'Inapropiado'
-      long_form: 'denunciou isto como inapropiado'
+      title: "Inapropiado"
+      long_form: "denunciou isto como inapropiado"
     notify_moderators:
       title: "Algo máis"
-      long_form: 'denunciou isto para revisión por un moderador'
+      long_form: "denunciou isto para revisión por un moderador"
   archetypes:
     regular:
       title: "Tema normal"
@@ -265,9 +260,7 @@ gl:
       xaxis: "Día"
       yaxis: "Número de visitas"
     signups:
-      title: "Novos usuarios"
       xaxis: "Día"
-      yaxis: "Número de novos usuarios"
     profile_views:
       title: "Vistas dos perfís de usuario"
       xaxis: "Día"
@@ -292,10 +285,6 @@ gl:
       title: "Marcadores"
       xaxis: "Día"
       yaxis: "Número de novos marcadores"
-    starred:
-      title: "Con estrela"
-      xaxis: "Día"
-      yaxis: "Número de novos temas con estrela"
     users_by_trust_level:
       title: "Usuarios por nivel de confianza"
       xaxis: "Nivel de confianza"
@@ -305,7 +294,6 @@ gl:
       xaxis: "Día"
       yaxis: "Número de correos-e enviados"
     user_to_user_private_messages:
-      title: "Entre usuarios"
       xaxis: "Día"
       yaxis: "Número de mensaxes"
     system_private_messages:
@@ -334,9 +322,6 @@ gl:
       num_clicks: "Clics"
       num_topics: "Temas"
       num_users: "Usuarios"
-    top_referred_topics:
-      xaxis: "Tema"
-      num_clicks: "Clics"
     page_view_anon_reqs:
       title: "Anónimo"
       xaxis: "Día"
@@ -347,7 +332,6 @@ gl:
       title: "Extractores web"
       xaxis: "Día"
     page_view_total_reqs:
-      title: "Total"
       xaxis: "Día"
     page_view_logged_in_mobile_reqs:
       xaxis: "Día"
@@ -381,16 +365,13 @@ gl:
       xaxis: "Día"
       yaxis: "Total"
     mobile_visits:
-      title: "Visitas de usuarios"
       xaxis: "Día"
       yaxis: "Número de visitas"
   site_settings:
     delete_old_hidden_posts: "Eliminar automaticamente as publicacións ocultas durante máis de 30 días."
-    default_locale: "Idioma predeterminado desta instancia (código ISO 639-1)"
     allow_user_locale: "Permitir os usuarios escoller o idioma da interface"
     min_post_length: "Número mínimo de caracteres permitido para unha publicación"
     min_first_post_length: "Número mínimo de caracteres (corpo do tema) permitido para unha primeira publicación"
-    min_private_message_post_length: "Número mínimo de caracteres permitido para unha mensaxe"
     max_post_length: "Número máximo de caracteres permitido para unha publicación"
     post_undo_action_window_mins: "Número de minutos que os usuarios teñen para desfacer accións recentes nunha publicación (gústames, denuncias, etc)."
     enable_badges: "Activar o sistema de insignias"
@@ -404,8 +385,8 @@ gl:
     enable_emoji: "Activar emojis"
   search:
     types:
-      category: 'Categorías'
-      user: 'Usuarios'
+      category: "Categorías"
+      user: "Usuarios"
   original_poster: "Publicador orixinal"
   most_recent_poster: "Publicador máis recente"
   frequent_poster: "Publicador frecuente"
@@ -429,11 +410,8 @@ gl:
       subject_template: "A copia de seguranza completouse correctamente"
     bulk_invite_succeeded:
       subject_template: "O convite en bloque procesouse correctamente"
-    csv_export_succeeded:
-      subject_template: "Completouse a exportación dos datos"
   page_not_found:
     see_more: "Máis"
-    search_google: "Google"
   terms_of_service:
     title: "Termos do servizo"
   about: "Sobre"
@@ -447,10 +425,4 @@ gl:
   privacy_topic:
     title: "Política de intimidade"
   admin_login:
-    error: "Erro!"
     submit_button: "Enviar correo-e"
-  time:
-    <<: *datetime_formats
-  activemodel:
-    errors:
-      <<: *errors

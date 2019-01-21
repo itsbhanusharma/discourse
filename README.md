@@ -22,11 +22,15 @@ Browse [lots more notable Discourse instances](https://www.discourse.org/custome
 
 ## Development
 
-1. If you're **brand new to Ruby and Rails**, please see [**Discourse as Your First Rails App**](http://blog.discourse.org/2013/04/discourse-as-your-first-rails-app/) or our [**Discourse Vagrant Developer Guide**](docs/VAGRANT.md), which includes a development environment in a virtual machine.
+To get your environment setup, follow the community setup guide for your operating system.
 
-2. If you're familiar with how Rails works and are comfortable setting up your own environment, use our [**Discourse Advanced Developer Guide**](docs/DEVELOPER-ADVANCED.md).
+1. If you're on macOS, try the [macOS development guide](https://meta.discourse.org/t/beginners-guide-to-install-discourse-on-macos-for-development/15772).
+1. If you're on Ubuntu, try the [Ubuntu development guide](https://meta.discourse.org/t/beginners-guide-to-install-discourse-on-ubuntu-for-development/14727).
+1. If you're on Windows, try the [Windows 10 development guide](https://meta.discourse.org/t/beginners-guide-to-install-discourse-on-windows-10-for-development/75149).
 
-Before you get started, ensure you have the following minimum versions: [Ruby 2.3+](http://www.ruby-lang.org/en/downloads/), [PostgreSQL 9.3+](http://www.postgresql.org/download/), [Redis 2.6+](http://redis.io/download). If you're having trouble, please see our [**TROUBLESHOOTING GUIDE**](docs/TROUBLESHOOTING.md) first!
+If you're familiar with how Rails works and are comfortable setting up your own environment, you can also try out the [**Discourse Advanced Developer Guide**](docs/DEVELOPER-ADVANCED.md), which is aimed primarily at Ubuntu and macOS environments.
+
+Before you get started, ensure you have the following minimum versions: [Ruby 2.5+](http://www.ruby-lang.org/en/downloads/), [PostgreSQL 10+](http://www.postgresql.org/download/), [Redis 2.6+](http://redis.io/download). If you're having trouble, please see our [**TROUBLESHOOTING GUIDE**](docs/TROUBLESHOOTING.md) first!
 
 ## Setting up Discourse
 
@@ -38,12 +42,12 @@ If you're looking for business class hosting, see [discourse.org/buy](https://ww
 
 Discourse is built for the *next* 10 years of the Internet, so our requirements are high:
 
-| Browsers | Tablets |  Phones |
-| -------- | ------- | ----------- |
-| Safari 6.1+ | iPad 3+ |  iOS 8+ |
-| Google Chrome 32+ |  Android 4.3+ | Android 4.3+ |
-| Internet Explorer 11+ |  |  |
-| Firefox 27+ | | |
+| Browsers              | Tablets      | Phones       |
+| --------------------- | ------------ | ------------ |
+| Safari 6.1+           | iPad 3+      | iOS 8+       |
+| Google Chrome 32+     | Android 4.3+ | Android 4.3+ |
+| Internet Explorer 11+ |              |              |
+| Firefox 27+           |              |              |
 
 ## Built With
 
@@ -57,7 +61,6 @@ Plus *lots* of Ruby Gems, a complete list of which is at [/master/Gemfile](https
 ## Contributing
 
 [![Build Status](https://api.travis-ci.org/discourse/discourse.svg?branch=master)](https://travis-ci.org/discourse/discourse)
-[![Code Climate](https://codeclimate.com/github/discourse/discourse.svg)](https://codeclimate.com/github/discourse/discourse)
 
 Discourse is **100% free** and **open source**. We encourage and support an active, healthy community that
 accepts contributions from the public &ndash; including you!
@@ -84,7 +87,7 @@ The original Discourse code contributors can be found in [**AUTHORS.MD**](docs/A
 
 ## Copyright / License
 
-Copyright 2014 - 2017 Civilized Discourse Construction Kit, Inc.
+Copyright 2014 - 2019 Civilized Discourse Construction Kit, Inc.
 
 Licensed under the GNU General Public License Version 2.0 (or later);
 you may not use this work except in compliance with the License.

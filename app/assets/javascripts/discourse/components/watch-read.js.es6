@@ -2,14 +2,16 @@ import isElementInViewport from "discourse/lib/is-element-in-viewport";
 
 export default Ember.Component.extend({
   didInsertElement() {
-    this._super();
+    this._super(...arguments);
     const currentUser = this.currentUser;
-    if (!currentUser) { return; }
+    if (!currentUser) {
+      return;
+    }
 
-    const path = this.get('path');
+    const path = this.get("path");
     if (path === "faq" || path === "guidelines") {
-      $(window).on('load.faq resize.faq scroll.faq', () => {
-        const faqUnread = !currentUser.get('read_faq');
+      $(window).on("load.faq resize.faq scroll.faq", () => {
+        const faqUnread = !currentUser.get("read_faq");
         if (faqUnread && isElementInViewport($(".contents p").last())) {
           this.sendAction();
         }
@@ -18,7 +20,7 @@ export default Ember.Component.extend({
   },
 
   willDestroyElement() {
-    this._super();
-    $(window).off('load.faq resize.faq scroll.faq');
+    this._super(...arguments);
+    $(window).off("load.faq resize.faq scroll.faq");
   }
 });

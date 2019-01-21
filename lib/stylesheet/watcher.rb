@@ -3,6 +3,17 @@ require 'listen'
 module Stylesheet
   class Watcher
 
+    def self.theme_id=(v)
+      @theme_id = v
+    end
+
+    def self.theme_id
+      if @theme_id.blank? && SiteSetting.default_theme_id != -1
+        @theme_id = SiteSetting.default_theme_id
+      end
+      @theme_id
+    end
+
     def self.watch(paths = nil)
       watcher = new(paths)
       watcher.start
@@ -68,9 +79,8 @@ module Stylesheet
       Stylesheet::Manager.cache.clear
 
       message = ["desktop", "mobile", "admin"].map do |name|
-        { target: name, new_href: Stylesheet::Manager.stylesheet_href(name.to_sym) , theme_key: SiteSetting.default_theme_key }
-      end
-
+        Stylesheet::Manager.stylesheet_data(name.to_sym, Stylesheet::Watcher.theme_id)
+      end.flatten
       MessageBus.publish '/file-change', message
     end
 

@@ -1,5 +1,9 @@
 import DropdownSelectBoxComponent from "select-kit/components/dropdown-select-box";
-import { default as computed, on } from "ember-addons/ember-computed-decorators";
+import {
+  default as computed,
+  observes,
+  on
+} from "ember-addons/ember-computed-decorators";
 import { buttonDetails } from "discourse/lib/notification-levels";
 import { allLevels } from "discourse/lib/notification-levels";
 
@@ -8,7 +12,6 @@ export default DropdownSelectBoxComponent.extend({
   nameProperty: "key",
   fullWidthOnMobile: true,
   content: allLevels,
-  collectionHeight: "auto",
   castInteger: true,
   autofilterable: false,
   filterable: false,
@@ -18,23 +21,30 @@ export default DropdownSelectBoxComponent.extend({
   i18nPostfix: "",
 
   @computed("iconForSelectedDetails")
-  headerIcon(iconForSelectedDetails) { return iconForSelectedDetails; },
-
-  iconForSelectedDetails: Ember.computed.alias("selectedDetails.icon"),
-
-  computeHeaderContent() {
-    let content = this.baseHeaderComputedContent();
-    content.name = I18n.t(`${this.get("i18nPrefix")}.${this.get("selectedDetails.key")}.title`);
-    content.hasSelection = this.get("hasSelection");
-    return content;
+  headerIcon(iconForSelectedDetails) {
+    return iconForSelectedDetails;
   },
 
-  @on("didReceiveAttrs")
+  @on("init")
+  @observes("i18nPostfix")
   _setNotificationsButtonComponentOptions() {
     this.get("rowComponentOptions").setProperties({
       i18nPrefix: this.get("i18nPrefix"),
       i18nPostfix: this.get("i18nPostfix")
     });
+  },
+
+  iconForSelectedDetails: Ember.computed.alias("selectedDetails.icon"),
+
+  computeHeaderContent() {
+    let content = this._super(...arguments);
+    content.name = I18n.t(
+      `${this.get("i18nPrefix")}.${this.get("selectedDetails.key")}${this.get(
+        "i18nPostfix"
+      )}.title`
+    );
+    content.hasSelection = this.get("hasSelection");
+    return content;
   },
 
   @computed("computedValue")

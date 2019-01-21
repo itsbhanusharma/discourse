@@ -5,6 +5,8 @@ class DiscoursePluginRegistry
 
   class << self
     attr_writer :javascripts
+    attr_writer :auth_providers
+    attr_writer :service_workers
     attr_writer :admin_javascripts
     attr_writer :stylesheets
     attr_writer :mobile_stylesheets
@@ -13,6 +15,8 @@ class DiscoursePluginRegistry
     attr_writer :handlebars
     attr_writer :serialized_current_user_fields
     attr_writer :seed_data
+    attr_writer :svg_icons
+    attr_writer :locales
     attr_accessor :custom_html
 
     def plugins
@@ -22,6 +26,14 @@ class DiscoursePluginRegistry
     # Default accessor values
     def javascripts
       @javascripts ||= Set.new
+    end
+
+    def auth_providers
+      @auth_providers ||= Set.new
+    end
+
+    def service_workers
+      @service_workers ||= Set.new
     end
 
     def asset_globs
@@ -48,6 +60,10 @@ class DiscoursePluginRegistry
       @sass_variables ||= Set.new
     end
 
+    def svg_icons
+      @svg_icons ||= []
+    end
+
     def handlebars
       @handlebars ||= Set.new
     end
@@ -58,6 +74,10 @@ class DiscoursePluginRegistry
 
     def seed_data
       @seed_data ||= HashWithIndifferentAccess.new({})
+    end
+
+    def locales
+      @locales ||= HashWithIndifferentAccess.new({})
     end
 
     def html_builders
@@ -72,6 +92,13 @@ class DiscoursePluginRegistry
       @vendored_pretty_text ||= Set.new
     end
 
+    def vendored_core_pretty_text
+      @vendored_core_pretty_text ||= Set.new
+    end
+  end
+
+  def self.register_auth_provider(auth_provider)
+    self.auth_providers << auth_provider
   end
 
   def register_js(filename, options = {})
@@ -79,8 +106,20 @@ class DiscoursePluginRegistry
     self.class.javascripts << filename
   end
 
+  def self.register_service_worker(filename, options = {})
+    self.service_workers << filename
+  end
+
+  def self.register_svg_icon(icon)
+    self.svg_icons << icon
+  end
+
   def register_css(filename)
     self.class.stylesheets << filename
+  end
+
+  def self.register_locale(locale, options = {})
+    self.locales[locale] = options
   end
 
   def register_archetype(name, options = {})
@@ -109,7 +148,7 @@ class DiscoursePluginRegistry
     end
   end
 
-  JS_REGEX = /\.js$|\.js\.erb$|\.js\.es6$/
+  JS_REGEX = /\.js$|\.js\.erb$|\.js\.es6|\.js\.no-module\.es6$/
   HANDLEBARS_REGEX = /\.hbs$|\.js\.handlebars$/
 
   def self.register_asset(asset, opts = nil)
@@ -118,6 +157,8 @@ class DiscoursePluginRegistry
         self.admin_javascripts << asset
       elsif opts == :vendored_pretty_text
         self.vendored_pretty_text << asset
+      elsif opts == :vendored_core_pretty_text
+        self.vendored_core_pretty_text << asset
       else
         self.javascripts << asset
       end
@@ -162,8 +203,30 @@ class DiscoursePluginRegistry
     result.uniq
   end
 
+  VENDORED_CORE_PRETTY_TEXT_MAP = {
+    "moment.js" => "lib/javascripts/moment.js",
+    "moment-timezone.js" => "lib/javascripts/moment-timezone-with-data.js"
+  }
+  def self.core_asset_for_name(name)
+    asset = VENDORED_CORE_PRETTY_TEXT_MAP[name]
+    raise KeyError, "Asset #{name} not found in #{VENDORED_CORE_PRETTY_TEXT_MAP}" unless asset
+    asset
+  end
+
+  def locales
+    self.class.locales
+  end
+
   def javascripts
     self.class.javascripts
+  end
+
+  def auth_providers
+    self.class.auth_providers
+  end
+
+  def service_workers
+    self.class.service_workers
   end
 
   def stylesheets
@@ -188,15 +251,20 @@ class DiscoursePluginRegistry
 
   def self.clear
     self.javascripts = nil
+    self.auth_providers = nil
+    self.service_workers = nil
     self.stylesheets = nil
     self.mobile_stylesheets = nil
     self.desktop_stylesheets = nil
     self.sass_variables = nil
     self.handlebars = nil
+    self.locales = nil
   end
 
   def self.reset!
     javascripts.clear
+    auth_providers.clear
+    service_workers.clear
     admin_javascripts.clear
     stylesheets.clear
     mobile_stylesheets.clear
@@ -206,7 +274,9 @@ class DiscoursePluginRegistry
     asset_globs.clear
     html_builders.clear
     vendored_pretty_text.clear
+    vendored_core_pretty_text.clear
     seed_path_builders.clear
+    locales.clear
   end
 
   def self.setup(plugin_class)

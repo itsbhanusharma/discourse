@@ -1,11 +1,8 @@
-{{plugin-outlet name="admin-dashboard-top"}}
-
 {{#conditional-loading-spinner condition=loading}}
+  <div class="alert alert-info">
+    The old dashboard is going to be removed in Discourse 2.2
+  </div>
   <div class="dashboard-left">
-    {{#if showVersionChecks}}
-      {{partial 'admin/templates/version-checks'}}
-    {{/if}}
-
     <div class="dashboard-stats trust-levels">
       <table class="table table-condensed table-hover">
         <thead>
@@ -29,13 +26,13 @@
     <div class="dashboard-stats totals">
       <table>
         <tr>
-          <td class="title">{{d-icon "shield"}} {{i18n 'admin.dashboard.admins'}}</td>
+          <td class="title">{{d-icon "shield-alt"}} {{i18n 'admin.dashboard.admins'}}</td>
           <td class="value">{{#link-to 'adminUsersList.show' 'admins'}}{{admins}}{{/link-to}}</td>
           <td class="title">{{d-icon "ban"}} {{i18n 'admin.dashboard.suspended'}}</td>
           <td class="value">{{#link-to 'adminUsersList.show' 'suspended'}}{{suspended}}{{/link-to}}</td>
         </tr>
         <tr>
-          <td class="title">{{d-icon "shield"}} {{i18n 'admin.dashboard.moderators'}}</td>
+          <td class="title">{{d-icon "shield-alt"}} {{i18n 'admin.dashboard.moderators'}}</td>
           <td class="value">{{#link-to 'adminUsersList.show' 'moderators'}}{{moderators}}{{/link-to}}</td>
           <td class="title">{{d-icon "ban"}} {{i18n 'admin.dashboard.silenced'}}</td>
           <td class="value">{{#link-to 'adminUsersList.show' 'silenced'}}{{silenced}}{{/link-to}}</td>
@@ -123,27 +120,6 @@
       </table>
     </div>
 
-    <div class="dashboard-stats">
-      <table class="table table-condensed table-hover">
-        <thead>
-          <tr>
-            <th>&nbsp;</th>
-            <th></th>
-            <th></th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>{{i18n 'admin.dashboard.uploads'}}</td>
-            <td>{{disk_space.uploads_used}} ({{i18n 'admin.dashboard.space_free' size=disk_space.uploads_free}})</td>
-            <td>{{#if currentUser.admin}}<a href="/admin/backups">{{i18n 'admin.dashboard.backups'}}</a>{{/if}}</td>
-            <td>{{disk_space.backups_used}} ({{i18n 'admin.dashboard.space_free' size=disk_space.backups_free}})</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
     {{#if showTrafficReport}}
     <div class="dashboard-stats">
       <table class="table table-condensed table-hover">
@@ -174,42 +150,6 @@
   </div>
 
   <div class="dashboard-right">
-    {{#if foundProblems}}
-      <div class="dashboard-stats detected-problems">
-        <div class="look-here">{{d-icon "exclamation-triangle"}}</div>
-        <div class="problem-messages">
-          {{#conditional-loading-spinner condition=loadingProblems}}
-            <p>
-              {{i18n 'admin.dashboard.problems_found'}}
-              <ul class="{{if loadingProblems 'invisible'}}">
-                {{#each problems as |problem|}}
-                  <li>{{{problem}}}</li>
-                {{/each}}
-              </ul>
-            </p>
-            <p class="actions">
-              <small>{{i18n 'admin.dashboard.last_checked'}}: {{problemsTimestamp}}</small>
-              {{d-button action="refreshProblems" class="btn-small" icon="refresh" label="admin.dashboard.refresh_problems"}}
-            </p>
-          {{/conditional-loading-spinner}}
-        </div>
-        <div class="clearfix"></div>
-      </div>
-    {{else}}
-      {{#if thereWereProblems}}
-        <div class="dashboard-stats detected-problems">
-          <div class="look-here">&nbsp;</div>
-          <div class="problem-messages">
-            <p>
-              {{i18n 'admin.dashboard.no_problems'}}
-              {{d-button action="refreshProblems" class="btn-small" icon="refresh" label="admin.dashboard.refresh_problems"}}
-            </p>
-          </div>
-          <div class="clearfix"></div>
-        </div>
-      {{/if}}
-    {{/if}}
-
     <div class="dashboard-stats">
       <table class="table table-condensed table-hover">
         <thead>
@@ -224,7 +164,7 @@
               <td class="title">
                 <div class="referred-topic-title">
                   <div class="overflow-ellipsis">
-                    <a href="/t/{{unbound data.topic_slug}}/{{unbound data.topic_id}}">{{data.topic_title}}</a>
+                    <a href="{{unbound data.topic_url}}">{{data.topic_title}}</a>
                   </div>
                 </div>
               </td>

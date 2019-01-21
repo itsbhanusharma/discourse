@@ -18,7 +18,12 @@ class UserDestroyer
     raise PostsExistError if !opts[:delete_posts] && user.posts.count != 0
     @guardian.ensure_can_delete_user!(user)
 
-    User.transaction do
+    # default to using a transaction
+    opts[:transaction] = true if opts[:transaction] != false
+
+    prepare_for_destroy(user) if opts[:prepare_for_destroy] == true
+
+    optional_transaction(open_transaction: opts[:transaction]) do
 
       Draft.where(user_id: user.id).delete_all
       QueuedPost.where(user_id: user.id).delete_all
@@ -47,6 +52,17 @@ class UserDestroyer
 
       user.post_actions.each do |post_action|
         post_action.remove_act!(Discourse.system_user)
+      end
+
+      # Add info about the user to staff action logs
+      UserHistory.staff_action_records(
+        Discourse.system_user, acting_user: user.username
+      ).each do |log|
+        log.details ||= ''
+        log.details = (log.details.split("\n") +
+            ["user_id: #{user.id}", "username: #{user.username}"]
+          ).join("\n")
+        log.save!
       end
 
       # keep track of emails used
@@ -81,12 +97,37 @@ class UserDestroyer
           end
 
           unless opts[:quiet]
-            StaffActionLogger.new(@actor == user ? Discourse.system_user : @actor).log_user_deletion(user, opts.slice(:context))
+            if @actor == user
+              deleted_by = Discourse.system_user
+              opts[:context] = I18n.t("staff_action_logs.user_delete_self", url: opts[:context])
+            else
+              deleted_by = @actor
+            end
+            StaffActionLogger.new(deleted_by).log_user_deletion(user, opts.slice(:context))
           end
-
           MessageBus.publish "/file-change", ["refresh"], user_ids: [u.id]
         end
       end
+    end
+  end
+
+  protected
+
+  def prepare_for_destroy(user)
+    PostAction.where(user_id: user.id).delete_all
+    UserAction.where('user_id = :user_id OR target_user_id = :user_id OR acting_user_id = :user_id', user_id: user.id).delete_all
+    PostTiming.where(user_id: user.id).delete_all
+    TopicViewItem.where(user_id: user.id).delete_all
+    TopicUser.where(user_id: user.id).delete_all
+    TopicAllowedUser.where(user_id: user.id).delete_all
+    Notification.where(user_id: user.id).delete_all
+  end
+
+  def optional_transaction(open_transaction: true)
+    if open_transaction
+      User.transaction { yield  }
+    else
+      yield
     end
   end
 

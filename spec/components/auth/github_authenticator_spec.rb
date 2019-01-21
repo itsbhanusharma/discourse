@@ -1,11 +1,5 @@
 require 'rails_helper'
 
-# In the ghetto ... getting the spec to run in autospec
-#  thing is we need to load up all auth really early pre-fork
-#  it means that the require is not going to get a new copy
-Auth.send(:remove_const, :GithubAuthenticator)
-load 'auth/github_authenticator.rb'
-
 def auth_token_for(user)
   {
     extra: {
@@ -17,7 +11,6 @@ def auth_token_for(user)
     },
     info: {
       email: user.email,
-      email_verified: true,
       nickname: user.username,
       name: user.name,
       image: "https://avatars3.githubusercontent.com/u/#{user.username}",
@@ -31,9 +24,8 @@ describe Auth::GithubAuthenticator do
   let(:user) { Fabricate(:user) }
 
   context 'after_authenticate' do
-
-    it 'can authenticate and create a user record for already existing users' do
-      hash = {
+    let(:data) do
+      {
         extra: {
           all_emails: [{
             email: user.email,
@@ -43,20 +35,82 @@ describe Auth::GithubAuthenticator do
         },
         info: {
           email: user.email,
-          email_verified: true,
           nickname: user.username,
           name: user.name,
         },
         uid: "100"
       }
+    end
 
-      result = authenticator.after_authenticate(hash)
+    it 'can authenticate and create a user record for already existing users' do
+      result = authenticator.after_authenticate(data)
 
       expect(result.user.id).to eq(user.id)
       expect(result.username).to eq(user.username)
       expect(result.name).to eq(user.name)
       expect(result.email).to eq(user.email)
       expect(result.email_valid).to eq(true)
+
+      # Authenticates again when user has Github user info
+      result = authenticator.after_authenticate(data)
+
+      expect(result.email).to eq(user.email)
+      expect(result.email_valid).to eq(true)
+    end
+
+    it 'should use primary email for new user creation over other available emails' do
+      hash = {
+        extra: {
+          all_emails: [{
+            email: "bob@example.com",
+            primary: false,
+            verified: true,
+          }, {
+            email: "john@example.com",
+            primary: true,
+            verified: true,
+          }]
+        },
+        info: {
+          email: "john@example.com",
+          nickname: "john",
+          name: "John Bob",
+        },
+        uid: "100"
+      }
+
+      result = authenticator.after_authenticate(hash)
+
+      expect(result.email).to eq("john@example.com")
+    end
+
+    it 'should not error out if user already has a different old github account attached' do
+
+      # There is a rare case where an end user had
+      # 2 different github accounts and moved emails between the 2
+
+      GithubUserInfo.create!(user_id: user.id, screen_name: 'bob', github_user_id: 100)
+
+      hash = {
+        extra: {
+          all_emails: [{
+            email: user.email,
+            primary: false,
+            verified: true,
+          }]
+        },
+        info: {
+          email: "john@example.com",
+          nickname: "john",
+          name: "John Bob",
+        },
+        uid: "1001"
+      }
+
+      result = authenticator.after_authenticate(hash)
+
+      expect(result.user.id).to eq(user.id)
+      expect(GithubUserInfo.where(user_id: user.id).pluck(:github_user_id)).to eq([1001])
     end
 
     it 'will not authenticate for already existing users with an unverified email' do
@@ -70,7 +124,6 @@ describe Auth::GithubAuthenticator do
         },
         info: {
           email: user.email,
-          email_verified: false,
           nickname: user.username,
           name: user.name,
         },
@@ -97,7 +150,6 @@ describe Auth::GithubAuthenticator do
         },
         info: {
           email: "person@example.com",
-          email_verified: true,
           nickname: "person",
           name: "Person Lastname",
         },
@@ -110,7 +162,7 @@ describe Auth::GithubAuthenticator do
       expect(result.username).to eq(hash[:info][:nickname])
       expect(result.name).to eq(hash[:info][:name])
       expect(result.email).to eq(hash[:info][:email])
-      expect(result.email_valid).to eq(hash[:info][:email_verified])
+      expect(result.email_valid).to eq(hash[:info][:email].present?)
     end
 
     it 'will skip blacklisted domains for non existing users' do
@@ -128,7 +180,6 @@ describe Auth::GithubAuthenticator do
         },
         info: {
           email: "not_allowed@blacklist.com",
-          email_verified: true,
           nickname: "person",
           name: "Person Lastname",
         },
@@ -154,7 +205,7 @@ describe Auth::GithubAuthenticator do
             verified: true,
           }, {
             email: "not_allowed@blacklist.com",
-            primary: true,
+            primary: false,
             verified: true,
           }, {
             email: "allowed@whitelist.com",
@@ -164,7 +215,6 @@ describe Auth::GithubAuthenticator do
         },
         info: {
           email: "person@example.com",
-          email_verified: true,
           nickname: "person",
           name: "Person Lastname",
         },
@@ -181,12 +231,42 @@ describe Auth::GithubAuthenticator do
       expect(result.email_valid).to eq(true)
     end
 
+    it 'can connect to a different existing user account' do
+      user1 = Fabricate(:user)
+      user2 = Fabricate(:user)
+
+      expect(authenticator.can_connect_existing_user?).to eq(true)
+
+      GithubUserInfo.create!(user_id: user1.id, github_user_id: 100, screen_name: "boris")
+
+      result = authenticator.after_authenticate(data, existing_account: user2)
+
+      expect(result.user.id).to eq(user2.id)
+      expect(GithubUserInfo.exists?(user_id: user1.id)).to eq(false)
+      expect(GithubUserInfo.exists?(user_id: user2.id)).to eq(true)
+    end
+
+  end
+
+  context 'revoke' do
+    let(:user) { Fabricate(:user) }
+    let(:authenticator) { Auth::GithubAuthenticator.new }
+
+    it 'raises exception if no entry for user' do
+      expect { authenticator.revoke(user) }.to raise_error(Discourse::NotFound)
+    end
+
+      it 'revokes correctly' do
+        GithubUserInfo.create!(user_id: user.id, github_user_id: 100, screen_name: "boris")
+        expect(authenticator.can_revoke?).to eq(true)
+        expect(authenticator.revoke(user)).to eq(true)
+        expect(authenticator.description_for_user(user)).to eq("")
+      end
+
   end
 
   describe 'avatar retrieval' do
     let(:job_klass) { Jobs::DownloadAvatarFromUrl }
-
-    before { SiteSetting.queue_jobs = true }
 
     context 'when user has a custom avatar' do
       let(:user_avatar) { Fabricate(:user_avatar, custom_upload: Fabricate(:upload)) }

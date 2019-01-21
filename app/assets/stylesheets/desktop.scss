@@ -19,8 +19,9 @@
 @import "desktop/user";
 @import "desktop/history";
 @import "desktop/queued-posts";
-@import "desktop/menu-panel";
 @import "desktop/group";
+@import "desktop/groups";
+@import "desktop/admin_customize";
 
 // Import all component-specific files
 @import "desktop/components/*";

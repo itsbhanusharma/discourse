@@ -11,16 +11,19 @@ class ComposerMessagesFinder
   end
 
   def find
+    return if editing_post?
+
     self.class.check_methods.each do |m|
       msg = send(m)
       return msg if msg.present?
     end
+
     nil
   end
 
   # Determines whether to show the user education text
   def check_education_message
-    return if @topic && @topic.archetype == Archetype.private_message
+    return if @topic&.private_message?
 
     if creating_topic?
       count = @user.created_topic_count
@@ -31,12 +34,18 @@ class ComposerMessagesFinder
     end
 
     if count < SiteSetting.educate_until_posts
-      education_posts_text = I18n.t('education.until_posts', count: SiteSetting.educate_until_posts)
       return {
         id: 'education',
         templateName: 'education',
         wait_for_typing: true,
-        body: PrettyText.cook(I18n.t(education_key, education_posts_text: education_posts_text, site_name: SiteSetting.title))
+        body: PrettyText.cook(
+          I18n.t(
+            education_key,
+            education_posts_text: I18n.t('education.until_posts', count: SiteSetting.educate_until_posts),
+            site_name: SiteSetting.title,
+            base_path: Discourse.base_path
+          )
+        )
       }
     end
 
@@ -84,9 +93,10 @@ class ComposerMessagesFinder
   def check_sequential_replies
     return unless educate_reply?(:notified_about_sequential_replies)
 
-    # Count the topics made by this user in the last day
+    # Count the posts made by this user in the last day
     recent_posts_user_ids = Post.where(topic_id: @details[:topic_id])
       .where("created_at > ?", 1.day.ago)
+      .where(post_type: Post.types[:regular])
       .order('created_at desc')
       .limit(SiteSetting.sequential_replies_threshold)
       .pluck(:user_id)
@@ -169,7 +179,8 @@ class ComposerMessagesFinder
         I18n.t(
           'education.get_a_room',
           count: SiteSetting.get_a_room_threshold,
-          reply_username: reply_username
+          reply_username: reply_username,
+          base_path: Discourse.base_path
         )
       )
     }
@@ -187,26 +198,35 @@ class ComposerMessagesFinder
       templateName: 'education',
       wait_for_typing: false,
       extraClass: 'education-message',
-      body: PrettyText.cook(I18n.t('education.reviving_old_topic', days: (Time.zone.now - @topic.last_posted_at).round / 1.day))
+      body: PrettyText.cook(
+        I18n.t(
+          'education.reviving_old_topic',
+          time_ago: FreedomPatches::Rails4.time_ago_in_words(@topic.last_posted_at, false, scope: :'datetime.distance_in_words_verbose')
+        )
+      )
     }
   end
 
   private
 
-    def educate_reply?(type)
-      replying? &&
-      @details[:topic_id] &&
-      (@topic.present? && !@topic.private_message?) &&
-      (@user.post_count >= SiteSetting.educate_until_posts) &&
-      !UserHistory.exists_for_user?(@user, type, topic_id: @details[:topic_id])
-    end
+  def educate_reply?(type)
+    replying? &&
+    @details[:topic_id] &&
+    (@topic.present? && !@topic.private_message?) &&
+    (@user.post_count >= SiteSetting.educate_until_posts) &&
+    !UserHistory.exists_for_user?(@user, type, topic_id: @details[:topic_id])
+  end
 
-    def creating_topic?
-      @details[:composer_action] == "createTopic"
-    end
+  def creating_topic?
+    @details[:composer_action] == "createTopic"
+  end
 
-    def replying?
-      @details[:composer_action] == "reply"
-    end
+  def replying?
+    @details[:composer_action] == "reply"
+  end
+
+  def editing_post?
+    @details[:composer_action] == "edit"
+  end
 
 end

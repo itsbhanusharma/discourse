@@ -1,4 +1,4 @@
-import SiteSetting from 'admin/models/site-setting';
+import SiteSetting from "admin/models/site-setting";
 
 export default Discourse.Route.extend({
   queryParams: {
@@ -10,6 +10,10 @@ export default Discourse.Route.extend({
   },
 
   afterModel(siteSettings) {
-    this.controllerFor('adminSiteSettings').set('allSiteSettings', siteSettings);
+    const controller = this.controllerFor("adminSiteSettings");
+
+    if (!controller.get("visibleSiteSettings")) {
+      controller.set("visibleSiteSettings", siteSettings);
+    }
   }
 });

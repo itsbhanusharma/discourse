@@ -2,7 +2,8 @@ require "mini_mime"
 require_dependency 'upload_creator'
 
 class UploadsController < ApplicationController
-  before_action :ensure_logged_in, except: [:show]
+  requires_login except: [:show]
+
   skip_before_action :preload_json, :check_xhr, :redirect_to_login_if_required, only: [:show]
 
   def create
@@ -12,7 +13,7 @@ class UploadsController < ApplicationController
     # 50 characters ought to be enough for the upload type
     type = params.require(:type).parameterize(separator: "_")[0..50]
 
-    if type == "avatar" && (SiteSetting.sso_overrides_avatar || !SiteSetting.allow_uploaded_avatars)
+    if type == "avatar" && !me.admin? && (SiteSetting.sso_overrides_avatar || !SiteSetting.allow_uploaded_avatars)
       return render json: failed_json, status: 422
     end
 
@@ -20,23 +21,30 @@ class UploadsController < ApplicationController
     file   = params[:file] || params[:files]&.first
     pasted = params[:pasted] == "true"
     for_private_message = params[:for_private_message] == "true"
+    for_site_setting = params[:for_site_setting] == "true"
     is_api = is_api?
     retain_hours = params[:retain_hours].to_i
 
     # note, atm hijack is processed in its own context and has not access to controller
     # longer term we may change this
     hijack do
-      info = UploadsController.create_upload(
-        current_user: me,
-        file: file,
-        url: url,
-        type: type,
-        for_private_message: for_private_message,
-        pasted: pasted,
-        is_api: is_api,
-        retain_hours: retain_hours
-      )
-      render json: UploadsController.serialize_upload(info), status: Upload === info ? 200 : 422
+      begin
+        info = UploadsController.create_upload(
+          current_user: me,
+          file: file,
+          url: url,
+          type: type,
+          for_private_message: for_private_message,
+          for_site_setting: for_site_setting,
+          pasted: pasted,
+          is_api: is_api,
+          retain_hours: retain_hours
+        )
+      rescue => e
+        render json: failed_json.merge(message: e.message&.split("\n")&.first), status: 422
+      else
+        render json: UploadsController.serialize_upload(info), status: Upload === info ? 200 : 422
+      end
     end
   end
 
@@ -66,7 +74,7 @@ class UploadsController < ApplicationController
           content_type: MiniMime.lookup_by_filename(upload.original_filename)&.content_type,
         }
         opts[:disposition]   = "inline" if params[:inline]
-        opts[:disposition] ||= "attachment" unless FileHelper.is_image?(upload.original_filename)
+        opts[:disposition] ||= "attachment" unless FileHelper.is_supported_image?(upload.original_filename)
         send_file(Discourse.store.path_for(upload), opts)
       else
         render_404
@@ -87,7 +95,16 @@ class UploadsController < ApplicationController
     serialized ||= (data || {}).as_json
   end
 
-  def self.create_upload(current_user:, file:, url:, type:, for_private_message:, pasted:, is_api:, retain_hours:)
+  def self.create_upload(current_user:,
+                         file:,
+                         url:,
+                         type:,
+                         for_private_message:,
+                         for_site_setting:,
+                         pasted:,
+                         is_api:,
+                         retain_hours:)
+
     if file.nil?
       if url.present? && is_api
         maximum_upload_size = [SiteSetting.max_image_size_kb, SiteSetting.max_attachment_size_kb].max.kilobytes
@@ -101,15 +118,14 @@ class UploadsController < ApplicationController
     else
       tempfile = file.tempfile
       filename = file.original_filename
-      content_type = file.content_type
     end
 
     return { errors: [I18n.t("upload.file_missing")] } if tempfile.nil?
 
     opts = {
       type: type,
-      content_type: content_type,
       for_private_message: for_private_message,
+      for_site_setting: for_site_setting,
       pasted: pasted,
     }
 
@@ -121,7 +137,7 @@ class UploadsController < ApplicationController
 
     upload.errors.empty? ? upload : { errors: upload.errors.values.flatten }
   ensure
-    tempfile&.close! rescue nil
+    tempfile&.close!
   end
 
 end

@@ -1,3 +1,72 @@
+#reply-control {
+  .reply-area {
+    margin: 0 auto;
+    padding: 5px 15px;
+    box-sizing: border-box;
+    height: calc(100% - 11px);
+    width: 100%;
+    .submit-panel {
+      flex-wrap: wrap;
+      align-items: center;
+    }
+  }
+
+  #private-message-users {
+    width: 404px;
+  }
+
+  .select-kit.is-expanded {
+    z-index: z("composer", "dropdown") + 1;
+  }
+}
+
+.category-input {
+  margin-left: 10px;
+}
+
+.edit-title {
+  .d-editor-preview-wrapper {
+    margin-top: -43px;
+  }
+  &:not(.private-message) {
+    .d-editor-preview-wrapper {
+      @media screen and (max-width: 955px) {
+        margin-top: -77px;
+      }
+    }
+  }
+
+  .with-tags {
+    .d-editor-preview-wrapper {
+      margin-top: -77px;
+      @media screen and (max-width: 900px) {
+        margin-top: -105px;
+      }
+    }
+  }
+}
+
+.closed {
+  .grippie {
+    display: none;
+  }
+}
+
+.open {
+  .grippie {
+    cursor: row-resize;
+    padding: 4px 0;
+    background: $tertiary;
+    &:before {
+      content: "";
+      display: block;
+      width: 27px;
+      margin: auto;
+      border-top: 3px double $secondary;
+    }
+  }
+}
+
 .composer-popup-container {
   max-width: 1500px;
   margin-left: auto;
@@ -6,20 +75,19 @@
 
 .composer-popup {
   position: absolute;
-  width: calc(50% - 55px);
+  width: calc(50% - 45px);
   max-width: 724px;
-  top: 16px;
-  bottom: 16px;
-  left: 50%;
-  // The composer goes off-center at 1550px
-  @media (min-width: 1550px) {
-    left: calc(50%);
-  }
+  top: 20px;
+  bottom: 10px;
+  left: 51%;
   overflow-y: auto;
-  z-index: 110;
+  z-index: z("composer", "popover");
   padding: 10px 10px 35px 10px;
-  box-shadow: 3px 3px 3px rgba(0,0,0, 0.34);
+  box-shadow: shadow("card");
   background: $highlight-medium;
+  .hide-preview & {
+    z-index: z("composer", "dropdown") + 1;
+  }
 
   &.urgent {
     background: $danger-low;
@@ -40,21 +108,20 @@
   a.close {
     position: absolute;
     right: 10px;
-    bottom: 10px;
+    top: 10px;
     color: $primary;
     opacity: 0.5;
-    font-size: 1.071em;
+    font-size: $font-up-1;
     &:before {
-      content: 'esc';
-      font-size: 0.85em;
+      content: "esc";
+      font-size: $font-down-1;
       margin-right: 0.5em;
     }
   }
 
   a.close:hover {
-    opacity: 1.0;
+    opacity: 1;
   }
-
 
   ul.topics {
     list-style: none;
@@ -68,8 +135,10 @@
   }
 }
 
-.d-editor-container {
-  max-width: 100%;
+.composer-controls {
+  .d-chevron-down {
+    vertical-align: text-top;
+  }
 }
 
 .custom-body {
@@ -83,7 +152,7 @@
   background-color: $tertiary-low;
 
   a[href] {
-    color: $primary-medium;
+    color: $primary;
   }
 
   .posts-count {
@@ -96,12 +165,22 @@
     padding: 0;
   }
   .search-link {
-    .fa, .blurb {
+    .blurb {
       color: dark-light-choose($primary-high, $secondary-medium);
+    }
+    .topic-title,
+    .blurb {
+      .fa {
+        color: dark-light-choose($primary-high, $secondary-medium);
+      }
+    }
+    span.topic {
+      display: flex;
+      flex-wrap: wrap;
     }
   }
   .badge-wrapper {
-    padding-left: 5px;
+    margin-left: 5px;
   }
 }
 
@@ -110,21 +189,11 @@
   width: calc(50% - 65px);
 }
 
-#reply-control {
-  .reply-area {
-    max-width: 1500px;
-    margin: 0 auto;
-    padding: 0 10px 10px 10px;
-    box-sizing: border-box;
-    height: calc(100% - 11px);
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    .submit-panel {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      flex-shrink: 0;
+.composer-bottom-right {
+  a {
+    color: $primary-high;
+    &:hover {
+      color: $tertiary;
     }
   }
 }
@@ -133,4 +202,54 @@
 #file-uploading {
   flex-grow: 1;
   text-align: right;
+}
+
+// fullscreen composer styles
+.fullscreen-composer {
+  overflow: hidden;
+
+  .profiler-results {
+    display: none;
+  }
+  #reply-control {
+    &.fullscreen {
+      // important needed because of inline styles when height is changed manually with grippie
+      height: 100vh !important;
+      z-index: z("header") + 1;
+      .d-editor-preview-wrapper {
+        margin-top: 1%;
+      }
+      .reply-to {
+        border-bottom: 1px solid $primary-low;
+        padding-bottom: 3px;
+        margin: 0;
+        .composer-controls {
+          margin-right: 0;
+        }
+      }
+      .d-editor-textarea-wrapper {
+        border: none;
+      }
+      &.show-preview .d-editor-textarea-wrapper {
+        border-right: 1px solid $primary-low;
+      }
+      #draft-status,
+      #file-uploading {
+        margin-left: 0;
+        text-align: initial;
+      }
+      .composer-popup {
+        top: 30px;
+      }
+      &:before {
+        content: "";
+        background: $secondary;
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        z-index: -1;
+        left: 0;
+      }
+    }
+  }
 }

@@ -1,11 +1,15 @@
 {{#each icons as |icon|}} {{d-icon icon}} {{/each}}
 
-<span class="selected-name" title={{title}}>
-  {{{name}}}
+<span class="selected-name">
+  {{#if forceEscape}}
+    {{label}}
+  {{else}}
+    {{{label}}}
+  {{/if}}
 </span>
 
 {{#if shouldDisplayClearableButton}}
-  <button class="btn-clear" {{action onClear bubbles=false}}>
+  <button class="btn-clear" {{action onClearSelection bubbles=false}}>
     {{d-icon 'times'}}
   </button>
 {{/if}}

@@ -15,8 +15,9 @@ class Validators::PostValidator < ActiveModel::Validator
     max_mention_validator(record)
     max_images_validator(record)
     max_attachments_validator(record)
-    max_links_validator(record)
+    can_post_links_validator(record)
     unique_post_validator(record)
+    force_edit_last_validator(record)
   end
 
   def presence(post)
@@ -57,8 +58,8 @@ class Validators::PostValidator < ActiveModel::Validator
   end
 
   def watched_words(post)
-    if !post.acting_user&.staff? && !post.acting_user&.staged && WordWatcher.new(post.raw).should_block?
-      post.errors[:base] << I18n.t('contains_blocked_words')
+    if !post.acting_user&.staff? && !post.acting_user&.staged && matches = WordWatcher.new(post.raw).should_block?
+      post.errors[:base] << I18n.t('contains_blocked_words', word: matches[0])
     end
   end
 
@@ -81,8 +82,25 @@ class Validators::PostValidator < ActiveModel::Validator
 
   # Ensure new users can not put too many images in a post
   def max_images_validator(post)
-    return if acting_user_is_trusted?(post) || private_message?(post)
-    add_error_if_count_exceeded(post, :no_images_allowed, :too_many_images, post.image_count, SiteSetting.newuser_max_images)
+    return if post.acting_user.blank? || post.acting_user&.staff?
+
+    if post.acting_user.trust_level < TrustLevel[SiteSetting.min_trust_to_post_images]
+      add_error_if_count_exceeded(
+        post,
+        :no_images_allowed_trust,
+        :no_images_allowed_trust,
+        post.image_count,
+        0
+      )
+    elsif post.acting_user.trust_level == TrustLevel[0]
+      add_error_if_count_exceeded(
+        post,
+        :no_images_allowed,
+        :too_many_images,
+        post.image_count,
+        SiteSetting.newuser_max_images
+      )
+    end
   end
 
   # Ensure new users can not put too many attachments in a post
@@ -91,8 +109,21 @@ class Validators::PostValidator < ActiveModel::Validator
     add_error_if_count_exceeded(post, :no_attachments_allowed, :too_many_attachments, post.attachment_count, SiteSetting.newuser_max_attachments)
   end
 
+  def can_post_links_validator(post)
+    if (post.link_count == 0 && !post.has_oneboxes?) || private_message?(post)
+      return newuser_links_validator(post)
+    end
+
+    guardian = Guardian.new(post.acting_user)
+    if post.linked_hosts.keys.all? { |h| guardian.can_post_link?(host: h) }
+      return newuser_links_validator(post)
+    end
+
+    post.errors.add(:base, I18n.t(:links_require_trust))
+  end
+
   # Ensure new users can not put too many links in a post
-  def max_links_validator(post)
+  def newuser_links_validator(post)
     return if acting_user_is_trusted?(post) || private_message?(post)
     add_error_if_count_exceeded(post, :no_links_allowed, :too_many_links, post.link_count, SiteSetting.newuser_max_links)
   end
@@ -111,10 +142,37 @@ class Validators::PostValidator < ActiveModel::Validator
     end
   end
 
+  def force_edit_last_validator(post)
+    return if SiteSetting.max_consecutive_replies == 0 || post.id || post.acting_user&.staff? || private_message?(post)
+
+    topic = post.topic
+    return if topic&.ordered_posts&.first&.user == post.user
+
+    last_posts_count = DB.query_single(<<~SQL, topic_id: post.topic_id, user_id: post.acting_user.id, max_replies: SiteSetting.max_consecutive_replies).first
+      SELECT COUNT(*)
+      FROM (
+        SELECT user_id
+          FROM posts
+         WHERE deleted_at IS NULL
+           AND NOT hidden
+           AND topic_id = :topic_id
+         ORDER BY post_number DESC
+         LIMIT :max_replies
+      ) c
+      WHERE c.user_id = :user_id
+    SQL
+    return if last_posts_count < SiteSetting.max_consecutive_replies
+
+    guardian = Guardian.new(post.acting_user)
+    if guardian.can_edit?(topic.ordered_posts.last)
+      post.errors.add(:base, I18n.t(:max_consecutive_replies, count: SiteSetting.max_consecutive_replies))
+    end
+  end
+
   private
 
-  def acting_user_is_trusted?(post)
-    post.acting_user.present? && post.acting_user.has_trust_level?(TrustLevel[1])
+  def acting_user_is_trusted?(post, level = 1)
+    post.acting_user.present? && post.acting_user.has_trust_level?(TrustLevel[level])
   end
 
   def private_message?(post)

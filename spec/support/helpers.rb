@@ -58,7 +58,7 @@ module Helpers
   def stub_guardian(user)
     guardian = Guardian.new(user)
     yield(guardian) if block_given?
-    Guardian.stubs(new: guardian).with(user)
+    Guardian.stubs(new: guardian).with(user, anything)
   end
 
   def wait_for(on_fail: nil, &blk)
@@ -84,5 +84,22 @@ module Helpers
 
   def email(email_name)
     fixture_file("emails/#{email_name}.eml")
+  end
+
+  def create_staff_tags(tag_names)
+    tag_group = Fabricate(:tag_group, name: 'Staff Tags')
+    TagGroupPermission.create!(
+      tag_group: tag_group,
+      group_id: Group::AUTO_GROUPS[:everyone],
+      permission_type: TagGroupPermission.permission_types[:readonly]
+    )
+    TagGroupPermission.create!(
+      tag_group: tag_group,
+      group_id: Group::AUTO_GROUPS[:staff],
+      permission_type: TagGroupPermission.permission_types[:full]
+    )
+    tag_names.each do |name|
+      tag_group.tags << (Tag.where(name: name).first || Fabricate(:tag, name: name))
+    end
   end
 end

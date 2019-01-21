@@ -1,4 +1,5 @@
 module UserNotificationsHelper
+  include GlobalPath
 
   def indent(text, by = 2)
     spacer = " " * by
@@ -18,39 +19,39 @@ module UserNotificationsHelper
   end
 
   def logo_url
-    logo_url = SiteSetting.digest_logo_url
-    logo_url = SiteSetting.logo_url if logo_url.blank? || logo_url =~ /\.svg$/i
-
+    logo_url = SiteSetting.site_digest_logo_url
+    logo_url = SiteSetting.site_logo_url if logo_url.blank? || logo_url =~ /\.svg$/i
     return nil if logo_url.blank? || logo_url =~ /\.svg$/i
-    if logo_url !~ /http(s)?\:\/\//
-      logo_url = "#{Discourse.base_url}#{logo_url}"
-    end
-    logo_url
+
+    full_cdn_url(logo_url)
   end
 
   def html_site_link(color)
     "<a href='#{Discourse.base_url}' style='color: ##{color}'>#{@site_name}</a>"
   end
 
-  def first_paragraph_from(html)
+  def first_paragraphs_from(html)
     doc = Nokogiri::HTML(html)
 
     result = ""
-    doc.css('body > p, aside.onebox').each do |node|
+    length = 0
+
+    doc.css('body > p, aside.onebox, body > ul, body > blockquote').each do |node|
       if node.text.present?
         result << node.to_s
-        return result if result.size >= 100
+        length += node.inner_text.length
+        return result if length >= SiteSetting.digest_min_excerpt_length
       end
     end
+
     return result unless result.blank?
 
     # If there is no first paragaph, return the first div (onebox)
     doc.css('div').first
   end
 
-  def email_excerpt(html_arg, posts_count = nil)
-    # only include 1st paragraph when more than 1 posts
-    html = (posts_count.nil? || posts_count > 1) ? (first_paragraph_from(html_arg) || html_arg).to_s : html_arg
+  def email_excerpt(html_arg)
+    html = (first_paragraphs_from(html_arg) || html_arg).to_s
     PrettyText.format_for_email(html).html_safe
   end
 
@@ -103,7 +104,7 @@ module UserNotificationsHelper
 
   def url_for_email(href)
     URI(href).host.present? ? href : UrlHelper.absolute("#{Discourse.base_uri}#{href}")
-  rescue URI::InvalidURIError, URI::InvalidComponentError
+  rescue URI::Error
     href
   end
 

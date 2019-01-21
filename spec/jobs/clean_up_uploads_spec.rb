@@ -4,33 +4,140 @@ require_dependency 'jobs/scheduled/clean_up_uploads'
 
 describe Jobs::CleanUpUploads do
 
-  def fabricate_upload
-    Fabricate(:upload, created_at: 2.hours.ago)
+  def fabricate_upload(attributes = {})
+    Fabricate(:upload, { created_at: 2.hours.ago }.merge(attributes))
   end
 
+  let(:upload) { fabricate_upload }
+
   before do
-    Upload.destroy_all
     SiteSetting.clean_up_uploads = true
     SiteSetting.clean_orphan_uploads_grace_period_hours = 1
     @upload = fabricate_upload
   end
 
   it "deletes orphan uploads" do
-    expect(Upload.count).to be(1)
+    expect do
+      Jobs::CleanUpUploads.new.execute(nil)
+    end.to change { Upload.count }.by(-1)
 
-    Jobs::CleanUpUploads.new.execute(nil)
-
-    expect(Upload.count).to be(0)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
   end
 
-  it "does not clean up uploads in site settings" do
+  describe 'when clean_up_uploads is disabled' do
+    before do
+      SiteSetting.clean_up_uploads = false
+    end
+
+    it 'should still delete invalid upload records' do
+      upload2 = fabricate_upload(
+        url: "",
+        retain_hours: nil
+      )
+
+      expect do
+        Jobs::CleanUpUploads.new.execute(nil)
+      end.to change { Upload.count }.by(-1)
+
+      expect(Upload.exists?(id: @upload.id)).to eq(true)
+      expect(Upload.exists?(id: upload2.id)).to eq(false)
+    end
+  end
+
+  it 'does not clean up upload site settings' do
+    begin
+      original_provider = SiteSetting.provider
+      SiteSetting.provider = SiteSettings::DbProvider.new(SiteSetting)
+      SiteSetting.clean_orphan_uploads_grace_period_hours = 1
+
+      logo_upload = fabricate_upload
+      logo_small_upload = fabricate_upload
+      digest_logo_upload = fabricate_upload
+      mobile_logo_upload = fabricate_upload
+      large_icon_upload = fabricate_upload
+      opengraph_image_upload = fabricate_upload
+      twitter_summary_large_image_upload = fabricate_upload
+      favicon_upload = fabricate_upload
+      apple_touch_icon_upload = fabricate_upload
+
+      SiteSetting.logo = logo_upload
+      SiteSetting.logo_small = logo_small_upload
+      SiteSetting.digest_logo = digest_logo_upload
+      SiteSetting.mobile_logo = mobile_logo_upload
+      SiteSetting.large_icon = large_icon_upload
+      SiteSetting.opengraph_image = opengraph_image_upload
+
+      SiteSetting.twitter_summary_large_image =
+        twitter_summary_large_image_upload
+
+      SiteSetting.favicon = favicon_upload
+      SiteSetting.apple_touch_icon = apple_touch_icon_upload
+
+      Jobs::CleanUpUploads.new.execute(nil)
+
+      [
+        logo_upload,
+        logo_small_upload,
+        digest_logo_upload,
+        mobile_logo_upload,
+        large_icon_upload,
+        opengraph_image_upload,
+        twitter_summary_large_image_upload,
+        favicon_upload,
+        apple_touch_icon_upload
+      ].each { |record| expect(Upload.exists?(id: record.id)).to eq(true) }
+
+      fabricate_upload
+      SiteSetting.opengraph_image = ''
+
+      Jobs::CleanUpUploads.new.execute(nil)
+    ensure
+      SiteSetting.delete_all
+      SiteSetting.provider = original_provider
+    end
+  end
+
+  it "does not clean up uploads with URLs used in site settings" do
     logo_upload = fabricate_upload
+    logo_small_upload = fabricate_upload
+    digest_logo_upload = fabricate_upload
+    mobile_logo_upload = fabricate_upload
+    large_icon_upload = fabricate_upload
+    default_opengraph_image_upload = fabricate_upload
+    twitter_summary_large_image_upload = fabricate_upload
+    favicon_upload = fabricate_upload
+    apple_touch_icon_upload = fabricate_upload
+    avatar1_upload = fabricate_upload
+    avatar2_upload = fabricate_upload
+
     SiteSetting.logo_url = logo_upload.url
+    SiteSetting.logo_small_url = logo_small_upload.url
+    SiteSetting.digest_logo_url = digest_logo_upload.url
+    SiteSetting.mobile_logo_url = mobile_logo_upload.url
+    SiteSetting.large_icon_url = large_icon_upload.url
+    SiteSetting.default_opengraph_image_url = default_opengraph_image_upload.url
+
+    SiteSetting.twitter_summary_large_image_url =
+      twitter_summary_large_image_upload.url
+
+    SiteSetting.favicon_url = favicon_upload.url
+    SiteSetting.apple_touch_icon_url = apple_touch_icon_upload.url
+    SiteSetting.selectable_avatars = [avatar1_upload.url, avatar2_upload.url].join("\n")
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: logo_upload.id)).to eq(logo_upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: logo_upload.id)).to eq(true)
+    expect(Upload.exists?(id: logo_small_upload.id)).to eq(true)
+    expect(Upload.exists?(id: digest_logo_upload.id)).to eq(true)
+    expect(Upload.exists?(id: mobile_logo_upload.id)).to eq(true)
+    expect(Upload.exists?(id: large_icon_upload.id)).to eq(true)
+    expect(Upload.exists?(id: default_opengraph_image_upload.id)).to eq(true)
+    expect(Upload.exists?(id: twitter_summary_large_image_upload.id)).to eq(true)
+    expect(Upload.exists?(id: favicon_upload.id)).to eq(true)
+    expect(Upload.exists?(id: apple_touch_icon_upload.id)).to eq(true)
+    expect(Upload.exists?(id: avatar1_upload.id)).to eq(true)
+    expect(Upload.exists?(id: avatar2_upload.id)).to eq(true)
   end
 
   it "does not clean up uploads in site settings when they use the CDN" do
@@ -41,8 +148,8 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: logo_small_upload.id)).to eq(logo_small_upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: logo_small_upload.id)).to eq(true)
   end
 
   it "does not delete profile background uploads" do
@@ -51,8 +158,8 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: profile_background_upload.id)).to eq(profile_background_upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: profile_background_upload.id)).to eq(true)
   end
 
   it "does not delete card background uploads" do
@@ -61,8 +168,8 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: card_background_upload.id)).to eq(card_background_upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: card_background_upload.id)).to eq(true)
   end
 
   it "does not delete category logo uploads" do
@@ -71,8 +178,8 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: category_logo_upload.id)).to eq(category_logo_upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: category_logo_upload.id)).to eq(true)
   end
 
   it "does not delete category background url uploads" do
@@ -81,8 +188,8 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: category_logo_upload.id)).to eq(category_logo_upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: category_logo_upload.id)).to eq(true)
   end
 
   it "does not delete post uploads" do
@@ -91,8 +198,8 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: upload.id)).to eq(upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: upload.id)).to eq(true)
   end
 
   it "does not delete user uploaded avatar" do
@@ -101,8 +208,8 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: upload.id)).to eq(upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: upload.id)).to eq(true)
   end
 
   it "does not delete user gravatar" do
@@ -111,8 +218,8 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: upload.id)).to eq(upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: upload.id)).to eq(true)
   end
 
   it "does not delete user custom upload" do
@@ -121,8 +228,8 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: upload.id)).to eq(upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: upload.id)).to eq(true)
   end
 
   it "does not delete uploads in a queued post" do
@@ -139,9 +246,9 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: upload.id)).to eq(upload)
-    expect(Upload.find_by(id: upload2.id)).to eq(upload2)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: upload.id)).to eq(true)
+    expect(Upload.exists?(id: upload2.id)).to eq(true)
   end
 
   it "does not delete uploads in a draft" do
@@ -152,9 +259,9 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: upload.id)).to eq(upload)
-    expect(Upload.find_by(id: upload2.id)).to eq(upload2)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: upload.id)).to eq(true)
+    expect(Upload.exists?(id: upload2.id)).to eq(true)
   end
 
   it "does not delete custom emojis" do
@@ -163,8 +270,17 @@ describe Jobs::CleanUpUploads do
 
     Jobs::CleanUpUploads.new.execute(nil)
 
-    expect(Upload.find_by(id: @upload.id)).to eq(nil)
-    expect(Upload.find_by(id: upload.id)).to eq(upload)
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: upload.id)).to eq(true)
   end
 
+  it "does not delete user exported csv uploads" do
+    csv_file = fabricate_upload
+    UserExport.create(file_name: "export.csv", user_id: Fabricate(:user).id, upload_id: csv_file.id)
+
+    Jobs::CleanUpUploads.new.execute(nil)
+
+    expect(Upload.exists?(id: @upload.id)).to eq(false)
+    expect(Upload.exists?(id: csv_file.id)).to eq(true)
+  end
 end

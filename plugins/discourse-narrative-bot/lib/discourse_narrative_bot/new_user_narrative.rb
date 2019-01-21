@@ -51,6 +51,7 @@ module DiscourseNarrativeBot
       },
 
       tutorial_mention: {
+        prerequisite: Proc.new { SiteSetting.enable_mentions },
         next_state: :tutorial_formatting,
         next_instructions: Proc.new { I18n.t("#{I18N_KEY}.formatting.instructions", base_uri: Discourse.base_uri) },
 
@@ -94,6 +95,7 @@ module DiscourseNarrativeBot
       },
 
       tutorial_flag: {
+        prerequisite: Proc.new { SiteSetting.allow_flagging_staff },
         next_state: :tutorial_search,
         next_instructions: Proc.new { I18n.t("#{I18N_KEY}.search.instructions", base_uri: Discourse.base_uri) },
         flag: {
@@ -182,15 +184,20 @@ module DiscourseNarrativeBot
       #{instance_eval(&@next_instructions)}
       RAW
 
+      title = I18n.t("#{I18N_KEY}.hello.title", title: SiteSetting.title)
+      if SiteSetting.max_emojis_in_title == 0
+        title = title.gsub(/:([\w\-+]+(?::t\d)?):/, '').strip
+      end
+
       opts = {
-        title: I18n.t("#{I18N_KEY}.hello.title", title: SiteSetting.title),
+        title: title,
         target_usernames: @user.username,
         archetype: Archetype.private_message,
         subtype: TopicSubtype.system_message,
       }
 
       if @post &&
-         @post.archetype == Archetype.private_message &&
+         @post.topic.private_message? &&
          @post.topic.topic_allowed_users.pluck(:user_id).include?(@user.id)
 
         opts = opts.merge(topic_id: @post.topic_id)
@@ -295,7 +302,6 @@ module DiscourseNarrativeBot
       post_topic_id = @post.topic_id
       return unless valid_topic?(post_topic_id)
 
-      @post.post_analyzer.cook(@post.raw, {})
       transition = true
       attempted_count = get_state_data(:attempted) || 0
 
@@ -306,7 +312,9 @@ module DiscourseNarrativeBot
         @data[:skip_attempted] = false
       end
 
-      if @post.post_analyzer.image_count > 0
+      cooked = @post.post_analyzer.cook(@post.raw, {})
+
+      if Nokogiri::HTML.fragment(cooked).css("img").size > 0
         set_state_data(:post_id, @post.id)
 
         if get_state_data(:liked)

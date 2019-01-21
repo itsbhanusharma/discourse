@@ -4,14 +4,15 @@ class S3Helper
 
   class SettingMissing < StandardError; end
 
-  attr_reader :s3_bucket_name
+  attr_reader :s3_bucket_name, :s3_bucket_folder_path
 
   def initialize(s3_bucket_name, tombstone_prefix = '', options = {})
+    @s3_client = options.delete(:client)
     @s3_options = default_s3_options.merge(options)
 
     @s3_bucket_name, @s3_bucket_folder_path = begin
       raise Discourse::InvalidParameters.new("s3_bucket_name") if s3_bucket_name.blank?
-      s3_bucket_name.downcase.split("/".freeze, 2)
+      self.class.get_bucket_and_folder_path(s3_bucket_name)
     end
 
     @tombstone_prefix =
@@ -22,31 +23,65 @@ class S3Helper
       end
   end
 
+  def self.get_bucket_and_folder_path(s3_bucket_name)
+    s3_bucket_name.downcase.split("/".freeze, 2)
+  end
+
   def upload(file, path, options = {})
     path = get_path_for_s3_upload(path)
     obj = s3_bucket.object(path)
-    obj.upload_file(file, options)
-    path
+
+    etag = begin
+      if File.size(file.path) >= Aws::S3::FileUploader::FIFTEEN_MEGABYTES
+        options[:multipart_threshold] = Aws::S3::FileUploader::FIFTEEN_MEGABYTES
+        obj.upload_file(file, options)
+        obj.load
+        obj.etag
+      else
+        options[:body] = file
+        obj.put(options).etag
+      end
+    end
+
+    return path, etag
   end
 
   def remove(s3_filename, copy_to_tombstone = false)
-    bucket = s3_bucket
-
     # copy the file in tombstone
     if copy_to_tombstone && @tombstone_prefix.present?
-      bucket
-        .object(File.join(@tombstone_prefix, s3_filename))
-        .copy_from(copy_source: File.join(@s3_bucket_name, get_path_for_s3_upload(s3_filename)))
+      self.copy(
+        get_path_for_s3_upload(s3_filename),
+        File.join(@tombstone_prefix, s3_filename)
+      )
     end
 
     # delete the file
-    bucket.object(get_path_for_s3_upload(s3_filename)).delete
+    s3_filename.prepend(multisite_upload_path) if Rails.configuration.multisite
+    s3_bucket.object(get_path_for_s3_upload(s3_filename)).delete
   rescue Aws::S3::Errors::NoSuchKey
+  end
+
+  def copy(source, destination, options: {})
+    if !Rails.configuration.multisite
+      options[:copy_source] = File.join(@s3_bucket_name, source)
+    else
+      if @s3_bucket_folder_path
+        folder, filename = begin
+          source.split("/".freeze, 2)
+        end
+        options[:copy_source] = File.join(@s3_bucket_name, folder, multisite_upload_path, filename)
+      else
+        options[:copy_source] = File.join(@s3_bucket_name, multisite_upload_path, source)
+      end
+    end
+    s3_bucket
+      .object(destination)
+      .copy_from(options)
   end
 
   # make sure we have a cors config for assets
   # otherwise we will have no fonts
-  def ensure_cors!
+  def ensure_cors!(rules = nil)
     rule = nil
 
     begin
@@ -58,24 +93,23 @@ class S3Helper
     end
 
     unless rule
-      puts "installing CORS rule"
+      rules = [{
+        allowed_headers: ["Authorization"],
+        allowed_methods: ["GET", "HEAD"],
+        allowed_origins: ["*"],
+        max_age_seconds: 3000
+      }] if rules.nil?
 
       s3_resource.client.put_bucket_cors(
         bucket: @s3_bucket_name,
         cors_configuration: {
-          cors_rules: [{
-            allowed_headers: ["Authorization"],
-            allowed_methods: ["GET", "HEAD"],
-            allowed_origins: ["*"],
-            max_age_seconds: 3000
-          }]
+          cors_rules: rules
         }
       )
     end
   end
 
   def update_lifecycle(id, days, prefix: nil, tag: nil)
-
     filter = {}
 
     if prefix
@@ -126,12 +160,15 @@ class S3Helper
   end
 
   def update_tombstone_lifecycle(grace_period)
+    return if !SiteSetting.s3_configure_tombstone_policy
     return if @tombstone_prefix.blank?
     update_lifecycle("purge_tombstone", grace_period, prefix: @tombstone_prefix)
   end
 
-  def list(prefix = "")
-    s3_bucket.objects(prefix: @s3_bucket_folder_path.to_s + prefix)
+  def list(prefix = "", marker = nil)
+    options = { prefix: get_path_for_s3_upload(prefix) }
+    options[:marker] = marker if marker.present?
+    s3_bucket.objects(options)
   end
 
   def tag_file(key, tags)
@@ -149,8 +186,16 @@ class S3Helper
     )
   end
 
+  def object(path)
+    s3_bucket.object(get_path_for_s3_upload(path))
+  end
+
   def self.s3_options(obj)
-    opts = { region: obj.s3_region }
+    opts = {
+      region: obj.s3_region,
+      endpoint: SiteSetting.s3_endpoint,
+      force_path_style: SiteSetting.s3_force_path_style
+    }
 
     unless obj.s3_use_iam_profile
       opts[:access_key_id] = obj.s3_access_key_id
@@ -179,14 +224,24 @@ class S3Helper
     path
   end
 
+  def multisite_upload_path
+    File.join("uploads", RailsMultisite::ConnectionManagement.current_db, "/")
+  end
+
+  def s3_client
+    @s3_client ||= Aws::S3::Client.new(@s3_options)
+  end
+
   def s3_resource
-    Aws::S3::Resource.new(@s3_options)
+    Aws::S3::Resource.new(client: s3_client)
   end
 
   def s3_bucket
-    bucket = s3_resource.bucket(@s3_bucket_name)
-    bucket.create unless bucket.exists?
-    bucket
+    @s3_bucket ||= begin
+      bucket = s3_resource.bucket(@s3_bucket_name)
+      bucket.create unless bucket.exists?
+      bucket
+    end
   end
 
   def check_missing_site_options

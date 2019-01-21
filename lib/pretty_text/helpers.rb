@@ -39,12 +39,6 @@ module PrettyText
       username
     end
 
-    def mention_lookup(name)
-      return false   if name.blank?
-      return "group" if Group.exists?(name: name)
-      return "user"  if User.exists?(username_lower: name.downcase)
-    end
-
     def category_hashtag_lookup(category_slug)
       if category = Category.query_from_hashtag_slug(category_slug)
         [category.url_with_id, category_slug]
@@ -63,22 +57,23 @@ module PrettyText
       end
 
       if map.length > 0
-        reverse_map = map.invert
+        reverse_map = {}
+
+        map.each do |key, value|
+          reverse_map[value] ||= []
+          reverse_map[value] << key
+        end
 
         Upload.where(sha1: map.values).pluck(:sha1, :url).each do |row|
           sha1, url = row
 
-          if short_url = reverse_map[sha1]
-            result[short_url] = url
+          if short_urls = reverse_map[sha1]
+            short_urls.each { |short_url| result[short_url] = url }
           end
         end
       end
 
       result
-    end
-
-    def lookup_inline_onebox(url)
-      InlineOneboxer.lookup(url)
     end
 
     def get_topic_info(topic_id)
@@ -89,6 +84,11 @@ module PrettyText
         {
           title: Rack::Utils.escape_html(topic.title),
           href: topic.url
+        }
+      elsif topic
+        {
+          title: I18n.t("on_another_topic"),
+          href: Discourse.base_url + topic.slugless_url
         }
       end
     end

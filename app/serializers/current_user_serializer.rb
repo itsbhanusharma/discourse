@@ -38,7 +38,24 @@ class CurrentUserSerializer < BasicUserSerializer
              :previous_visit_at,
              :seen_notification_id,
              :primary_group_id,
-             :primary_group_name
+             :can_create_topic,
+             :link_posting_access,
+             :external_id,
+             :top_category_ids,
+             :hide_profile_and_presence,
+             :groups
+
+  def groups
+    object.visible_groups.pluck(:id, :name).map { |id, name| { id: id, name: name.downcase } }
+  end
+
+  def link_posting_access
+    scope.link_posting_access
+  end
+
+  def can_create_topic
+    scope.can_create_topic?(nil)
+  end
 
   def include_site_flagged_posts_count?
     object.staff?
@@ -54,6 +71,10 @@ class CurrentUserSerializer < BasicUserSerializer
 
   def reply_count
     object.user_stat.topic_reply_count
+  end
+
+  def hide_profile_and_presence
+    object.user_option.hide_profile_and_presence
   end
 
   def enable_quoting
@@ -89,7 +110,7 @@ class CurrentUserSerializer < BasicUserSerializer
   end
 
   def can_send_private_email_messages
-    scope.cand_send_private_messages_to_email?
+    scope.can_send_private_messages_to_email?
   end
 
   def can_edit
@@ -142,9 +163,21 @@ class CurrentUserSerializer < BasicUserSerializer
   end
 
   def muted_category_ids
-    @muted_category_ids ||= CategoryUser.where(user_id: object.id,
-                                               notification_level: TopicUser.notification_levels[:muted])
+    CategoryUser.lookup(object, :muted).pluck(:category_id)
+  end
+
+  def top_category_ids
+    omitted_notification_levels = [CategoryUser.notification_levels[:muted], CategoryUser.notification_levels[:regular]]
+    CategoryUser.where(user_id: object.id)
+      .where.not(notification_level: omitted_notification_levels)
+      .order("
+        CASE
+          WHEN notification_level = 3 THEN 1
+          WHEN notification_level = 2 THEN 2
+          WHEN notification_level = 4 THEN 3
+        END")
       .pluck(:category_id)
+      .slice(0, SiteSetting.header_dropdown_category_count)
   end
 
   def dismissed_banner_key
@@ -179,12 +212,11 @@ class CurrentUserSerializer < BasicUserSerializer
     object.primary_group_id.present?
   end
 
-  def primary_group_name
-    object.primary_group.name.downcase
+  def external_id
+    object&.single_sign_on_record&.external_id
   end
 
-  def include_primary_group_name?
-    object.primary_group&.name.present?
+  def include_external_id?
+    SiteSetting.enable_sso
   end
-
 end

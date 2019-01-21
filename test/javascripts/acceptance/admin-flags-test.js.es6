@@ -1,152 +1,128 @@
 import { acceptance } from "helpers/qunit-helpers";
 acceptance("Admin - Flagging", { loggedIn: true });
 
-QUnit.test("flagged posts", assert => {
-  visit("/admin/flags/active");
-  andThen(() => {
-    assert.equal(find('.flagged-posts .flagged-post').length, 1);
-    assert.equal(find('.flagged-post .flag-user').length, 1, 'shows who flagged it');
-    assert.equal(find('.flagged-post-response').length, 2);
-    assert.equal(find('.flagged-post-response:eq(0) img.avatar').length, 1);
-    assert.equal(find('.flagged-post-user-details .username').length, 1, 'shows the flagged username');
-  });
+QUnit.test("flagged posts", async assert => {
+  await visit("/admin/flags/active");
+
+  assert.equal(find(".flagged-posts .flagged-post").length, 1);
+  assert.equal(
+    find(".flagged-post .flag-user").length,
+    1,
+    "shows who flagged it"
+  );
+  assert.equal(find(".flagged-post-response").length, 2);
+  assert.equal(find(".flagged-post-response:eq(0) img.avatar").length, 1);
+  assert.equal(
+    find(".flagged-post-user-details .username").length,
+    1,
+    "shows the flagged username"
+  );
 });
 
-QUnit.test("flagged posts - agree", assert => {
-  visit("/admin/flags/active");
+QUnit.test("flagged posts - agree", async assert => {
+  const agreeFlag = selectKit(".agree-flag");
 
-  andThen(() => {
-    expandSelectKit('.agree-flag');
-  });
+  await visit("/admin/flags/active");
 
-  andThen(() => {
-    selectKitSelectRow('confirm-agree-keep', { selector: '.agree-flag'});
-  });
+  await agreeFlag.expand();
+  await agreeFlag.selectRowByValue("confirm-agree-keep");
 
-  andThen(() => {
-    assert.equal(find('.admin-flags .flagged-post').length, 0, 'post was removed');
-  });
+  assert.equal(
+    find(".admin-flags .flagged-post").length,
+    0,
+    "post was removed"
+  );
 });
 
-QUnit.test("flagged posts - agree + hide", assert => {
-  visit("/admin/flags/active");
+QUnit.test("flagged posts - agree + hide", async assert => {
+  const agreeFlag = selectKit(".agree-flag");
 
-  andThen(() => {
-    expandSelectKit('.agree-flag');
-  });
+  await visit("/admin/flags/active");
 
-  andThen(() => {
-    selectKitSelectRow('confirm-agree-hide', { selector: '.agree-flag'});
-  });
+  await agreeFlag.expand();
+  await agreeFlag.selectRowByValue("confirm-agree-hide");
 
-  andThen(() => {
-    assert.equal(find('.admin-flags .flagged-post').length, 0, 'post was removed');
-  });
+  assert.equal(
+    find(".admin-flags .flagged-post").length,
+    0,
+    "post was removed"
+  );
 });
 
-QUnit.test("flagged posts - agree + deleteSpammer", assert => {
-  visit("/admin/flags/active");
+QUnit.test("flagged posts - agree + deleteSpammer", async assert => {
+  const agreeFlag = selectKit(".agree-flag");
 
-  andThen(() => {
-    expandSelectKit('.agree-flag');
-  });
+  await visit("/admin/flags/active");
 
-  andThen(() => {
-    selectKitSelectRow('delete-spammer', { selector: '.agree-flag'});
-  });
+  await agreeFlag.expand();
+  await agreeFlag.selectRowByValue("delete-spammer");
 
-  click('.confirm-delete');
+  await click(".confirm-delete");
 
-  andThen(() => {
-    assert.equal(find('.admin-flags .flagged-post').length, 0, 'post was removed');
-  });
+  assert.equal(
+    find(".admin-flags .flagged-post").length,
+    0,
+    "post was removed"
+  );
 });
 
-QUnit.test("flagged posts - disagree", assert => {
-  visit("/admin/flags/active");
-  click('.disagree-flag');
-  andThen(() => {
-    assert.equal(find('.admin-flags .flagged-post').length, 0);
-  });
+QUnit.test("flagged posts - disagree", async assert => {
+  await visit("/admin/flags/active");
+  await click(".disagree-flag");
+
+  assert.equal(find(".admin-flags .flagged-post").length, 0);
 });
 
-QUnit.test("flagged posts - defer", assert => {
-  visit("/admin/flags/active");
-  click('.defer-flag');
-  andThen(() => {
-    assert.equal(find('.admin-flags .flagged-post').length, 0);
-  });
+QUnit.test("flagged posts - defer", async assert => {
+  await visit("/admin/flags/active");
+  await click(".defer-flag");
+
+  assert.equal(find(".admin-flags .flagged-post").length, 0);
 });
 
-QUnit.test("flagged posts - delete + defer", assert => {
-  visit("/admin/flags/active");
+QUnit.test("flagged posts - delete + defer", async assert => {
+  const deleteFlag = selectKit(".delete-flag");
 
-  andThen(() => {
-    expandSelectKit('.delete-flag');
-  });
+  await visit("/admin/flags/active");
 
-  andThen(() => {
-    selectKitSelectRow('delete-defer', { selector: '.delete-flag'});
-  });
+  await deleteFlag.expand();
+  await deleteFlag.selectRowByValue("delete-defer");
 
-  andThen(() => {
-    assert.equal(find('.admin-flags .flagged-post').length, 0);
-  });
+  assert.equal(find(".admin-flags .flagged-post").length, 0);
 });
 
-QUnit.test("flagged posts - delete + agree", assert => {
-  visit("/admin/flags/active");
+QUnit.test("flagged posts - delete + agree", async assert => {
+  const deleteFlag = selectKit(".delete-flag");
 
-  andThen(() => {
-    expandSelectKit('.delete-flag');
-  });
+  await visit("/admin/flags/active");
 
-  andThen(() => {
-    selectKitSelectRow('delete-agree', { selector: '.delete-flag'});
-  });
+  await deleteFlag.expand();
+  await deleteFlag.selectRowByValue("delete-agree");
 
-  andThen(() => {
-    assert.equal(find('.admin-flags .flagged-post').length, 0);
-  });
+  assert.equal(find(".admin-flags .flagged-post").length, 0);
 });
 
-QUnit.test("flagged posts - delete + deleteSpammer", assert => {
-  visit("/admin/flags/active");
+QUnit.test("flagged posts - delete + deleteSpammer", async assert => {
+  const deleteFlag = selectKit(".delete-flag");
 
-  andThen(() => {
-    expandSelectKit('.delete-flag');
-  });
+  await visit("/admin/flags/active");
 
-  andThen(() => {
-    selectKitSelectRow('delete-spammer', { selector: '.delete-flag'});
-  });
+  await deleteFlag.expand();
+  await deleteFlag.selectRowByValue("delete-spammer");
 
-  click('.confirm-delete');
+  await click(".confirm-delete");
 
-  andThen(() => {
-    assert.equal(find('.admin-flags .flagged-post').length, 0);
-  });
+  assert.equal(find(".admin-flags .flagged-post").length, 0);
 });
 
-QUnit.test("flagged posts - suspend", assert => {
-  visit("/admin/flags/active");
-  click('.suspend-user');
-  andThen(() => {
-    assert.equal(find('.suspend-user-modal:visible').length, 1);
-    assert.equal(find('.suspend-user-modal .cant-suspend').length, 1);
-  });
-});
+QUnit.test("topics with flags", async assert => {
+  await visit("/admin/flags/topics");
 
-QUnit.test("topics with flags", assert => {
-  visit("/admin/flags/topics");
-  andThen(() => {
-    assert.equal(find('.flagged-topics .flagged-topic').length, 1);
-    assert.equal(find('.flagged-topic .flagged-topic-user').length, 2);
-    assert.equal(find('.flagged-topic .flag-counts').length, 3);
-  });
+  assert.equal(find(".flagged-topics .flagged-topic").length, 1);
+  assert.equal(find(".flagged-topic .flagged-topic-user").length, 2);
+  assert.equal(find(".flagged-topic div.flag-counts").length, 3);
 
-  click('.flagged-topic .show-details');
-  andThen(() => {
-    assert.equal(currentURL(), '/admin/flags/topics/280');
-  });
+  await click(".flagged-topic .show-details");
+
+  assert.equal(currentURL(), "/admin/flags/topics/280");
 });

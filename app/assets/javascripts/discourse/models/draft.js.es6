@@ -1,22 +1,18 @@
-import { ajax } from 'discourse/lib/ajax';
+import { ajax } from "discourse/lib/ajax";
 const Draft = Discourse.Model.extend();
 
 Draft.reopenClass({
-
   clear(key, sequence) {
     return ajax("/draft.json", {
-      type: 'DELETE',
-      data: {
-        draft_key: key,
-        sequence: sequence
-      }
+      type: "DELETE",
+      data: { draft_key: key, sequence }
     });
   },
 
   get(key) {
-    return ajax('/draft.json', {
+    return ajax("/draft.json", {
       data: { draft_key: key },
-      dataType: 'json'
+      dataType: "json"
     });
   },
 
@@ -28,15 +24,10 @@ Draft.reopenClass({
   save(key, sequence, data) {
     data = typeof data === "string" ? data : JSON.stringify(data);
     return ajax("/draft.json", {
-      type: 'POST',
-      data: {
-        draft_key: key,
-        data: data,
-        sequence: sequence
-      }
+      type: "POST",
+      data: { draft_key: key, sequence, data }
     });
   }
-
 });
 
 export default Draft;

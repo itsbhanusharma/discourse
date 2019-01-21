@@ -9,6 +9,11 @@
     <li>
       {{#link-to 'userActivity.replies'}}{{i18n 'user_action_groups.5'}}{{/link-to}}
     </li>
+    {{#if user.showDrafts}}
+    <li>
+      {{#link-to 'userActivity.drafts'}}{{i18n 'user_action_groups.15'}}{{/link-to}}
+    </li>
+    {{/if}}
     <li>
       {{#link-to 'userActivity.likesGiven'}}{{i18n 'user_action_groups.1'}}{{/link-to}}
     </li>
@@ -24,7 +29,7 @@
 
   {{#if canDownloadPosts}}
     <div class='user-archive'>
-      {{d-button action="exportUserArchive" label="user.download_archive.button_text" icon="download"}}
+      {{d-button action=(action "exportUserArchive") class="btn-default" label="user.download_archive.button_text" icon="download"}}
     </div>
   {{/if}}
 {{/d-section}}

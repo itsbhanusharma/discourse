@@ -80,6 +80,7 @@ module DiscourseNarrativeBot
       },
 
       tutorial_poll: {
+        prerequisite: Proc.new { SiteSetting.poll_enabled },
         next_state: :tutorial_details,
         next_instructions: Proc.new { I18n.t("#{I18N_KEY}.details.instructions", i18n_post_args) },
         reply: {
@@ -131,13 +132,15 @@ module DiscourseNarrativeBot
     def init_tutorial_recover
       data = get_data(@user)
 
-      post = PostCreator.create!(@user,         raw: I18n.t(
+      post = PostCreator.create!(@user,
+        raw: I18n.t(
           "#{I18N_KEY}.recover.deleted_post_raw",
           i18n_post_args(discobot_username: self.discobot_user.username)
         ),
-                                                topic_id: data[:topic_id],
-                                                skip_bot: true,
-                                                skip_validations: true)
+        topic_id: data[:topic_id],
+        skip_bot: true,
+        skip_validations: true
+      )
 
       set_state_data(:post_id, post.id)
 
@@ -150,7 +153,7 @@ module DiscourseNarrativeBot
         flag = PostAction.create!(
           user: self.discobot_user,
           post: post, post_action_type_id:
-          PostActionType.types[:off_topic]
+          PostActionType.types[:notify_moderators]
         )
 
         PostAction.defer_flags!(post, self.discobot_user)
@@ -175,7 +178,7 @@ module DiscourseNarrativeBot
       }
 
       if @post &&
-         @post.archetype == Archetype.private_message &&
+         @post.topic.private_message? &&
          @post.topic.topic_allowed_users.pluck(:user_id).include?(@user.id)
 
         opts = opts.merge(topic_id: @post.topic_id)

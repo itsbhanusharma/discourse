@@ -5,30 +5,20 @@
 // Media queries
 // --------------------------------------------------
 
+$breakpoints: (
+  mobile-small: 320px,
+  mobile: 550px,
+  tablet: 768px,
+  medium: 850px,
+  large: 1000px,
+  extra-large: 1140px
+);
 
-@mixin small-width {
-  @media all and (max-width: 850px) {
+@mixin breakpoint($bp, $rule: max-width, $type: screen) {
+  @media #{$type} and (#{$rule}: map-get($breakpoints, $bp)) {
     @content;
   }
 }
-
-@mixin medium-width {
-  @media all and (min-width: 1000px) and (max-width: 1139px) {
-    @content;
-  }
-}
-
-@mixin large-width {
-  @media all and (min-width: 1140px) {
-    @content;
-  }
-}
-
-@mixin mobile-portrait      { @media all and (max-width : 320px) { @content; } }
-@mixin not-mobile-portrait  { @media all and (min-width : 321px) { @content; } }
-@mixin mobile-landscape     { @media all and (min-width : 321px) and (max-width : 959px) { @content; } }
-@mixin not-tablet-landscape { @media all and (max-width : 959px) { @content; } }
-@mixin tablet-landscape     { @media all and (min-width : 960px) { @content; } }
 
 // CSS3 properties
 // --------------------------------------------------
@@ -36,29 +26,15 @@
 // Clearfix
 
 @mixin clearfix() {
-    &:before,
-    &:after {
-        content: "";
-        display: table;
-    }
-    &:after {
-        clear: both;
-    }
+  &:before,
+  &:after {
+    content: "";
+    display: table;
+  }
+  &:after {
+    clear: both;
+  }
 }
-
-// Border radius
-
-@mixin border-radius-all($radius) {
-  border-radius: $radius;
-}
-
-// Box shadow
-
-@mixin box-shadow($shadow) {
-  box-shadow: $shadow;
-}
-
-// Linear gradient
 
 //noinspection CssOptimizeSimilarProperties
 @mixin linear-gradient($start-color, $end-color) {
@@ -77,12 +53,6 @@
   }
 }
 
-@mixin visible {
-  opacity: 1;
-  visibility: visible;
-  transition-delay: 0s;
-}
-
 //
 // --------------------------------------------------
 
@@ -90,14 +60,13 @@
 
 @mixin user-select($mode) {
   -webkit-user-select: $mode;
-     -moz-user-select: $mode;
-      -ms-user-select: $mode;
+  -moz-user-select: $mode;
+  -ms-user-select: $mode;
 }
 
 @mixin unselectable {
   @include user-select(none);
 }
-
 
 // Stuff we repeat
 @mixin post-aside {
@@ -107,6 +76,70 @@
 
 // We still need -webkit for latest iPhone and Safari
 @mixin transform($transforms) {
-	-webkit-transform: $transforms;
-            transform: $transforms;
+  -webkit-transform: $transforms;
+  transform: $transforms;
+}
+
+@mixin appearance-none() {
+  // resets default browser styles
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+@mixin fa-rotate($degrees, $rotation) {
+  -ms-filter: "progid:DXImageTransform.Microsoft.BasicImage(rotation=#{$rotation})";
+  -webkit-transform: rotate($degrees);
+  -ms-transform: rotate($degrees);
+  transform: rotate($degrees);
+}
+
+/// Helper function to easily use an SVG inline in CSS
+/// without encoding it to base64, saving bytes.
+/// It also helps with browser support, especially for IE11.
+///
+/// @author Jakob Eriksen
+/// @link http://codepen.io/jakob-e/pen/doMoML
+/// @param {String} $svg - SVG image to encode
+/// @return {String} - Encoded SVG data uri
+@function svg-uri($svg) {
+  $encoded: "";
+  $slice: 2000;
+  $index: 0;
+  $loops: ceil(str-length($svg) / $slice);
+
+  @for $i from 1 through $loops {
+    $chunk: str-slice($svg, $index, $index + $slice - 1);
+    $chunk: str-replace($chunk, '"', "'");
+    $chunk: str-replace($chunk, "<", "%3C");
+    $chunk: str-replace($chunk, ">", "%3E");
+    $chunk: str-replace($chunk, "&", "%26");
+    $chunk: str-replace($chunk, "#", "%23");
+    $encoded: #{$encoded}#{$chunk};
+    $index: $index + $slice;
+  }
+
+  @return url("data:image/svg+xml;charset=utf8,#{$encoded}");
+}
+
+/// Replace `$search` with `$replace` in `$string`
+/// @author Hugo Giraudel
+/// @link http://sassmeister.com/gist/1b4f2da5527830088e4d
+/// @param {String} $string - Initial string
+/// @param {String} $search - Substring to replace
+/// @param {String} $replace ('') - New value
+/// @return {String} - Updated string
+@function str-replace($string, $search, $replace: "") {
+  $index: str-index($string, $search);
+
+  @if $index {
+    @return str-slice($string, 1, $index - 1) + $replace +
+      str-replace(
+        str-slice($string, $index + str-length($search)),
+        $search,
+        $replace
+      );
+  }
+
+  @return $string;
 }

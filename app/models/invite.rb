@@ -32,7 +32,7 @@ class Invite < ActiveRecord::Base
   def user_doesnt_already_exist
     @email_already_exists = false
     return if email.blank?
-    user = User.find_by_email(email)
+    user = Invite.find_user_by_email(email)
 
     if user && user.id != self.user_id
       @email_already_exists = true
@@ -55,19 +55,6 @@ class Invite < ActiveRecord::Base
 
   def redeem(username: nil, name: nil, password: nil, user_custom_fields: nil)
     InviteRedeemer.new(self, username, name, password, user_custom_fields).redeem unless expired? || destroyed? || !link_valid?
-  end
-
-  def self.extend_permissions(topic, user, invited_by)
-    if topic.private_message?
-      topic.grant_permission_to_user(user.email)
-    elsif topic.category && topic.category.groups.any?
-      if Guardian.new(invited_by).can_invite_via_email?(topic)
-        (topic.category.groups - user.groups).each do |group|
-          group.add(user)
-          GroupActionLogger.new(Discourse.system_user, group).log_add_user_to_group(user)
-        end
-      end
-    end
   end
 
   def self.invite_by_email(email, invited_by, topic = nil, group_ids = nil, custom_message = nil)
@@ -102,9 +89,12 @@ class Invite < ActiveRecord::Base
     custom_message = opts[:custom_message]
     lower_email = Email.downcase(email)
 
-    if user = User.find_by_email(lower_email)
-      extend_permissions(topic, user, invited_by) if topic
-      raise UserExists.new I18n.t("invite.user_exists", email: lower_email, username: user.username)
+    if user = find_user_by_email(lower_email)
+      raise UserExists.new(I18n.t("invite.user_exists",
+        email: lower_email,
+        username: user.username,
+        base_path: Discourse.base_path
+      ))
     end
 
     invite = Invite.with_deleted
@@ -117,10 +107,19 @@ class Invite < ActiveRecord::Base
       invite = nil
     end
 
-    invite.update_columns(created_at: Time.zone.now, updated_at: Time.zone.now) if invite
+    if invite
+      invite.update_columns(
+        created_at: Time.zone.now,
+        updated_at: Time.zone.now,
+        via_email: invite.via_email && send_email
+      )
+    else
+      create_args = {
+        invited_by: invited_by,
+        email: lower_email,
+        via_email: send_email
+      }
 
-    if !invite
-      create_args = { invited_by: invited_by, email: lower_email }
       create_args[:moderator] = true if opts[:moderator]
       create_args[:custom_message] = custom_message if custom_message
       invite = Invite.create!(create_args)
@@ -134,13 +133,9 @@ class Invite < ActiveRecord::Base
 
     if group_ids.present?
       group_ids = group_ids - invite.invited_groups.pluck(:group_id)
+
       group_ids.each do |group_id|
         invite.invited_groups.create!(group_id: group_id)
-      end
-    else
-      if topic && topic.category && Guardian.new(invited_by).can_invite_to?(topic)
-        group_ids = topic.category.groups.pluck(:id) - invite.invited_groups.pluck(:group_id)
-        group_ids.each { |group_id| invite.invited_groups.create!(group_id: group_id) }
       end
     end
 
@@ -148,6 +143,10 @@ class Invite < ActiveRecord::Base
 
     invite.reload
     invite
+  end
+
+  def self.find_user_by_email(email)
+    User.with_email(email).where(staged: false).first
   end
 
   def self.get_group_ids(group_names)
@@ -166,9 +165,7 @@ class Invite < ActiveRecord::Base
     Invite.where(invited_by_id: inviter.id)
       .where('invites.email IS NOT NULL')
       .includes(user: :user_stat)
-      .order('CASE WHEN invites.user_id IS NOT NULL THEN 0 ELSE 1 END',
-                 'user_stats.time_read DESC',
-                 'invites.redeemed_at DESC')
+      .order("CASE WHEN invites.user_id IS NOT NULL THEN 0 ELSE 1 END, user_stats.time_read DESC, invites.redeemed_at DESC")
       .limit(limit)
       .offset(offset)
       .references('user_stats')
@@ -269,6 +266,7 @@ end
 #  invalidated_at :datetime
 #  moderator      :boolean          default(FALSE), not null
 #  custom_message :text
+#  via_email      :boolean          default(FALSE), not null
 #
 # Indexes
 #

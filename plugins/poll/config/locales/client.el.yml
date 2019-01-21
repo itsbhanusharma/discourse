@@ -15,8 +15,6 @@ el:
         one: "συνολική ψήφος"
         other: "συνολικές ψήφοι"
       average_rating: "Μέση βαθμολογία: <strong>%{average}</strong>."
-      public:
-        title: "Οι ψηφοφορίες είναι δημόσιες "
       multiple:
         help:
           at_least_min_options:
@@ -55,6 +53,7 @@ el:
         help:
           options_count: Εισάγετε τουλάχιστόν 2 επιλογές
           invalid_values: Η ελάχιστη τιμή θα πρέπει να είναι μικρότερη από την μέγιστη τιμή.
+          min_step_value: Η ελάχιστη τιμή για το βήμα είναι 1
         poll_type:
           label: Τύπος
           regular: Μία επιλογή

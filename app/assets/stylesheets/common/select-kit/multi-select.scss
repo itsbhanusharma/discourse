@@ -1,30 +1,32 @@
-.select-box-kit, .select-kit {
+.select-kit {
   &.multi-select {
     width: 300px;
     background: $secondary;
     border-radius: 0;
 
-    .select-box-kit-body, .select-kit-body {
+    .select-kit-body {
       width: 100%;
     }
 
-    .select-box-kit-row, .select-kit-row {
+    .select-kit-row {
       margin: 5px;
       min-height: 1px;
       padding: 5px;
       border-radius: 0;
     }
 
-    .select-box-kit-filter, .select-kit-filter {
+    .select-kit-filter {
       border: 0;
+      flex: 1 0 0px;
+      margin: 1px;
     }
 
     .multi-select-header {
       background: $secondary;
-      border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
+      border: 1px solid $primary-medium;
 
       &.is-focused {
-        box-shadow: $tertiary 0px 0px 6px 0px;
+        box-shadow: shadow("focus");
         border-radius: 0;
       }
     }
@@ -40,15 +42,15 @@
       .multi-select-header {
         border-radius: 0;
         border-bottom: 1px solid transparent;
-        box-shadow: $tertiary 0px 0px 6px 0px;
+        box-shadow: shadow("focus");
       }
     }
 
     &.is-expanded {
-      .select-box-kit-wrapper, .select-kit-wrapper {
+      .select-kit-wrapper {
         display: block;
         border: 1px solid $tertiary;
-        box-shadow: $tertiary 0px 0px 6px 0px;
+        box-shadow: shadow("focus");
         border-radius: 0;
       }
 
@@ -57,29 +59,27 @@
         box-shadow: none;
       }
 
-      .select-box-kit-body, .select-kit-body {
+      .select-kit-body {
         border-radius: 0;
       }
     }
 
     .choices {
-      margin: 0;
-      padding: 2.5px;
+      margin: 0 2px;
       box-sizing: border-box;
-      display: inline-flex;
+      display: flex;
       justify-content: flex-start;
       flex-wrap: wrap;
+      width: 100%;
 
       .choice {
         display: inline-flex;
         box-sizing: border-box;
-        padding: 0 5px;
-        border: 1px solid transparent;
         align-items: center;
         justify-content: space-between;
         flex-wrap: wrap;
         flex-direction: row;
-        margin: 2.5px;
+        margin: 1px 0px 2px 2px;
       }
 
       .filter {
@@ -89,8 +89,10 @@
         min-width: 50px;
         padding: 0;
         outline: none;
+        flex: 1 0 0px;
 
-        .filter-input, .filter-input:focus {
+        .filter-input,
+        .filter-input:focus {
           border: none;
           background: none;
           display: inline-block;
@@ -101,70 +103,66 @@
           margin: 0;
           outline: 0;
           border: 0;
-          -webkit-box-shadow: none;
           box-shadow: none;
           border-radius: 0;
-          height: 21px;
+          min-height: unset; // overrides input defaults
         }
       }
 
       .selected-color {
         .selected-color-wrapper {
           display: flex;
-          flex: 1;
+          flex: 1 0 0px;
           flex-direction: column;
         }
 
         .color-preview {
           height: 5px;
-          margin: 0 2px 2px 2px;
-          border-radius: 5px;
+          margin: 0 2px 2px 0px;
+          display: flex;
+          width: 100%;
+        }
+      }
+
+      .selected-category {
+        .body {
+          display: flex;
+          align-items: center;
+        }
+        .badge-wrapper {
+          &.bullet {
+            margin-right: 2.5px;
+          }
+
+          padding: 2px 4px;
+          line-height: $line-height-medium;
+          display: flex;
+          flex: 1 0 0px;
+          align-items: center;
         }
       }
 
       .selected-name {
-        align-items: center;
-        justify-content: flex-start;
-        color: $primary;
-        cursor: default;
-        border: 1px solid $primary-medium;
-        border-radius: 3px;
-        box-shadow: 0 0 2px $secondary inset, 0 1px 0 rgba(0,0,0,0.05);
-        background-clip: padding-box;
-        -webkit-touch-callout: none;
-        user-select: none;
-        background-color: $primary-low;
-        cursor: pointer;
-        outline: none;
-        line-height: normal;
-        overflow: auto;
-        flex: unset;
-        flex-wrap: nowrap;
+        .footer {
+          display: flex;
+          width: 100%;
+        }
 
-        .name {
-          padding: 0 5px;
-          line-height: 18px;
+        .body {
+          background: $primary-low;
+          padding: 4px;
+        }
+
+        .d-icon {
+          color: $primary-low-mid;
+          vertical-align: middle;
+        }
+        &:hover .d-icon {
+          color: $danger;
         }
 
         &.is-highlighted {
-          box-shadow: 0 0 2px $danger, 0 1px 0 rgba(0,0,0,0.05);
-        }
-
-        .locked-icon, .delete-icon {
-          justify-content: center;
-          align-items: center;
-          width: 21px;
-          height: 21px;
-          display: inline-flex;
-          .d-icon {
-            color: $primary-medium;
-            cursor: pointer;
-            font-size: 14px;
-
-            &:hover {
-              color: $primary;
-            }
-          }
+          box-shadow: 0 0 2px $danger, 0 1px 0 rgba(0, 0, 0, 0.05);
         }
       }
     }

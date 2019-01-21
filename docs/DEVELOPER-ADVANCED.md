@@ -1,18 +1,18 @@
 # Discourse Advanced Developer Install Guide
 
-This guide is aimed at advanced Rails developers who have installed their own Rails apps before. If you are new to Rails, you are likely much better off with our **[Discourse Vagrant Developer Guide](VAGRANT.md)**.
+This guide is aimed at advanced Rails developers who have installed their own Rails apps before.
 
 Note: If you are developing on a Mac, you will probably want to look at [these instructions](DEVELOPMENT-OSX-NATIVE.md) as well.
 
 # Preparing a fresh Ubuntu install
 
-To get your Ubuntu 16.04 LTS install up and running to develop Discourse and Discourse plugins follow the commands below. We assume an English install of Ubuntu.
+To get your Ubuntu 16.04 or 18.04 LTS install up and running to develop Discourse and Discourse plugins follow the commands below. We assume an English install of Ubuntu.
 
     # Basics
     whoami > /tmp/username
     sudo add-apt-repository ppa:chris-lea/redis-server
     sudo apt-get -yqq update
-    sudo apt-get -yqq install python-software-properties vim curl expect debconf-utils git-core build-essential zlib1g-dev libssl-dev openssl libcurl4-openssl-dev libreadline6-dev libpcre3 libpcre3-dev imagemagick postgresql postgresql-contrib-9.5 libpq-dev postgresql-server-dev-9.5 redis-server advancecomp gifsicle jhead jpegoptim libjpeg-turbo-progs optipng pngcrush pngquant gnupg2
+    sudo apt-get -yqq install python-software-properties vim curl expect debconf-utils git-core build-essential zlib1g-dev libssl-dev openssl libcurl4-openssl-dev libreadline6-dev libpcre3 libpcre3-dev imagemagick redis-server advancecomp gifsicle jhead jpegoptim libjpeg-turbo-progs optipng pngcrush pngquant gnupg2
 
     # Ruby
     curl -sSL https://rvm.io/mpapis.asc | gpg2 --import -
@@ -21,9 +21,11 @@ To get your Ubuntu 16.04 LTS install up and running to develop Discourse and Dis
 
     # exit the terminal and open it again to activate RVM
 
-    rvm install 2.3.4
-    rvm --default use 2.3.4 # If this error out check https://rvm.io/integration/gnome-terminal
-    gem install bundler mailcatcher
+    rvm install 2.5.3
+    rvm --default use 2.5.3 # If this error out check https://rvm.io/integration/gnome-terminal
+    gem install bundler mailcatcher rake
+
+    # Download and install postgresql-10 from https://wiki.postgresql.org/wiki/Apt
 
     # Postgresql
     sudo -u postgres -i
@@ -38,7 +40,7 @@ To get your Ubuntu 16.04 LTS install up and running to develop Discourse and Dis
 
     nvm install node
     nvm alias default node
-    npm install -g svgo phantomjs-prebuilt
+    npm install -g svgo
 
 
 If everything goes alright, let's clone Discourse and start hacking:
@@ -54,10 +56,10 @@ If everything goes alright, let's clone Discourse and start hacking:
     # time to create the database and run migrations
     bundle exec rake db:create db:migrate
     RAILS_ENV=test bundle exec rake db:create db:migrate
-    
+
     # run the specs (optional)
     bundle exec rake autospec # CTRL + C to stop
-    
+
     # launch discourse
     bundle exec rails s -b 0.0.0.0 # open browser on http://localhost:3000 and you should see Discourse
 

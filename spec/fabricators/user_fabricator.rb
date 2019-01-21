@@ -12,7 +12,7 @@ Fabricator(:user_single_email, class_name: :user) do
 end
 
 Fabricator(:user, from: :user_single_email) do
-  after_create { |user| Fabricate(:alternate_email, user: user)  }
+  after_create { |user| Fabricate(:secondary_email, user: user) }
 end
 
 Fabricator(:coding_horror, from: :user) do
@@ -26,14 +26,14 @@ Fabricator(:evil_trout, from: :user) do
   name 'Evil Trout'
   username 'eviltrout'
   email 'eviltrout@somewhere.com'
-  password 'imafish'
+  password 'imafish123'
 end
 
 Fabricator(:walter_white, from: :user) do
   name 'Walter White'
   username 'heisenberg'
   email 'wwhite@bluemeth.com'
-  password 'letscook'
+  password 'letscook123'
 end
 
 Fabricator(:inactive_user, from: :user) do
@@ -97,7 +97,7 @@ Fabricator(:anonymous, from: :user) do
   username { sequence(:username) { |i| "anonymous#{i}" } }
   email { sequence(:email) { |i| "anonymous#{i}@anonymous.com" } }
   trust_level TrustLevel[1]
-  trust_level_locked true
+  manual_locked_trust_level TrustLevel[1]
 
   before_create do |user|
     user.custom_fields["master_id"] = 1

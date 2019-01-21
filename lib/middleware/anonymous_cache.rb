@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require_dependency "mobile_detection"
 require_dependency "crawler_detection"
 require_dependency "guardian"
@@ -10,13 +12,23 @@ module Middleware
     end
 
     class Helper
-      USER_AGENT = "HTTP_USER_AGENT".freeze
-      RACK_SESSION = "rack.session".freeze
-      ACCEPT_ENCODING = "HTTP_ACCEPT_ENCODING".freeze
+      USER_AGENT = "HTTP_USER_AGENT"
+      RACK_SESSION = "rack.session"
+      ACCEPT_ENCODING = "HTTP_ACCEPT_ENCODING"
 
       def initialize(env)
         @env = env
         @request = Rack::Request.new(@env)
+      end
+
+      def blocked_crawler?
+        @request.get? &&
+        !@request.xhr? &&
+        !@request.path.ends_with?('robots.txt') &&
+        !@request.path.ends_with?('srv/status') &&
+        @request[Auth::DefaultCurrentUserProvider::API_KEY].nil? &&
+        @env[Auth::DefaultCurrentUserProvider::USER_API_KEY].nil? &&
+        CrawlerDetection.is_blocked_crawler?(@request.env['HTTP_USER_AGENT'])
       end
 
       def is_mobile=(val)
@@ -56,15 +68,16 @@ module Middleware
       end
 
       def cache_key
-        @cache_key ||= "ANON_CACHE_#{@env["HTTP_ACCEPT"]}_#{@env["HTTP_HOST"]}#{@env["REQUEST_URI"]}|m=#{is_mobile?}|c=#{is_crawler?}|b=#{has_brotli?}|t=#{theme_key}"
+        @cache_key ||= "ANON_CACHE_#{@env["HTTP_ACCEPT"]}_#{@env["HTTP_HOST"]}#{@env["REQUEST_URI"]}|m=#{is_mobile?}|c=#{is_crawler?}|b=#{has_brotli?}|t=#{theme_ids.join(",")}"
       end
 
-      def theme_key
-        key, _ = @request.cookies['theme_key']&.split(',')
-        if key && Guardian.new.allow_theme?(key)
-          key
+      def theme_ids
+        ids, _ = @request.cookies['theme_ids']&.split('|')
+        ids = ids&.split(",")&.map(&:to_i)
+        if ids && Guardian.new.allow_themes?(ids)
+          Theme.transform_ids(ids)
         else
-          nil
+          []
         end
       end
 
@@ -86,7 +99,49 @@ module Middleware
 
       def no_cache_bypass
         request = Rack::Request.new(@env)
-        request.cookies['_bypass_cache'].nil?
+        request.cookies['_bypass_cache'].nil? &&
+          request[Auth::DefaultCurrentUserProvider::API_KEY].nil? &&
+          @env[Auth::DefaultCurrentUserProvider::USER_API_KEY].nil?
+      end
+
+      def force_anonymous!
+        @env[Auth::DefaultCurrentUserProvider::USER_API_KEY] = nil
+        @env['HTTP_COOKIE'] = nil
+        @env['rack.request.cookie.hash'] = {}
+        @env['rack.request.cookie.string'] = ''
+        @env['_bypass_cache'] = nil
+        request = Rack::Request.new(@env)
+        request.delete_param('api_username')
+        request.delete_param('api_key')
+      end
+
+      def logged_in_anon_limiter
+        @logged_in_anon_limiter ||= RateLimiter.new(
+          nil,
+          "logged_in_anon_cache_#{@env["HOST"]}/#{@env["REQUEST_URI"]}",
+          GlobalSetting.force_anonymous_min_per_10_seconds,
+          10
+        )
+      end
+
+      def check_logged_in_rate_limit!
+        !logged_in_anon_limiter.performed!(raise_error: false)
+      end
+
+      MIN_TIME_TO_CHECK = 0.05
+
+      def should_force_anonymous?
+        if (queue_time = @env['REQUEST_QUEUE_SECONDS']) && get?
+          if queue_time > GlobalSetting.force_anonymous_min_queue_seconds
+            return check_logged_in_rate_limit!
+          elsif queue_time >= MIN_TIME_TO_CHECK
+            if !logged_in_anon_limiter.can_perform?
+              return check_logged_in_rate_limit!
+            end
+          end
+        end
+
+        false
       end
 
       def cacheable?
@@ -142,12 +197,30 @@ module Middleware
 
     def call(env)
       helper = Helper.new(env)
+      force_anon = false
 
-      if helper.cacheable?
-        helper.cached || helper.cache(@app.call(env))
-      else
-        @app.call(env)
+      if helper.blocked_crawler?
+        env["discourse.request_tracker.skip"] = true
+        return [403, {}, ["Crawler is not allowed!"]]
       end
+
+      if helper.should_force_anonymous?
+        force_anon = env["DISCOURSE_FORCE_ANON"] = true
+        helper.force_anonymous!
+      end
+
+      result =
+        if helper.cacheable?
+          helper.cached || helper.cache(@app.call(env))
+        else
+          @app.call(env)
+        end
+
+      if force_anon
+        result[1]["Set-Cookie"] = "dosp=1; Path=/"
+      end
+
+      result
 
     end
 

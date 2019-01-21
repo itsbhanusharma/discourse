@@ -2,17 +2,17 @@
 export function bufferedProperty(property) {
   const mixin = {
     buffered: function() {
-      return Em.ObjectProxy.extend(BufferedProxy).create({
+      return Ember.ObjectProxy.extend(BufferedProxy).create({
         content: this.get(property)
       });
     }.property(property),
 
     rollbackBuffer: function() {
-      this.get('buffered').discardBufferedChanges();
+      this.get("buffered").discardBufferedChanges();
     },
 
     commitBuffer: function() {
-      this.get('buffered').applyBufferedChanges();
+      this.get("buffered").applyBufferedChanges();
     }
   };
 
@@ -22,4 +22,4 @@ export function bufferedProperty(property) {
   return Ember.Mixin.create(mixin);
 }
 
-export default bufferedProperty('content');
+export default bufferedProperty("content");

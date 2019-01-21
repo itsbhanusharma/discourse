@@ -418,7 +418,7 @@ class ImportScripts::VBulletin < ImportScripts::Base
       WHERE id IN (SELECT topic_id FROM closed_topic_ids)
     SQL
 
-    Topic.exec_sql(sql, @closed_topic_ids)
+    DB.exec(sql, @closed_topic_ids)
   end
 
   def post_process_posts
@@ -619,10 +619,6 @@ class ImportScripts::VBulletin < ImportScripts::Base
 
   def parse_timestamp(timestamp)
     Time.zone.at(@tz.utc_to_local(timestamp))
-  end
-
-  def fake_email
-    SecureRandom.hex << "@domain.com"
   end
 
   def mysql_query(sql)

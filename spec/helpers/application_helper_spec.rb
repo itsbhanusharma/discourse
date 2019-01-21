@@ -23,6 +23,15 @@ describe ApplicationHelper do
         set_env "COMPRESS_BROTLI", "1"
       end
 
+      after do
+        ActionController::Base.config.relative_url_root = nil
+      end
+
+      it "deals correctly with subfolder" do
+        ActionController::Base.config.relative_url_root = "/community"
+        expect(helper.preload_script("application")).to include('https://s3cdn.com/assets/application.js')
+      end
+
       it "returns magic brotli mangling for brotli requests" do
 
         helper.request.env["HTTP_ACCEPT_ENCODING"] = 'br'
@@ -138,15 +147,29 @@ describe ApplicationHelper do
     end
   end
 
-  describe '#rtl_class' do
-    it "returns 'rtl' when the I18n.locale is rtl" do
+  describe '#html_classes' do
+    it "includes 'rtl' when the I18n.locale is rtl" do
       I18n.stubs(:locale).returns(:he)
-      expect(helper.rtl_class).to eq('rtl')
+      expect(helper.html_classes.split(" ")).to include('rtl')
     end
 
     it 'returns an empty string when the I18n.locale is not rtl' do
       I18n.stubs(:locale).returns(:zh_TW)
-      expect(helper.rtl_class).to eq('')
+      expect(helper.html_classes.split(" ")).not_to include('rtl')
+    end
+
+    it 'includes the user specified text size' do
+      user = Fabricate(:user)
+      user.user_option.text_size = "larger"
+      user.user_option.save!
+      helper.request.env[Auth::DefaultCurrentUserProvider::CURRENT_USER_KEY] = user
+      expect(helper.html_classes.split(" ")).to include('text-size-larger')
+    end
+
+    it 'falls back to the default text size for anon' do
+      expect(helper.html_classes.split(" ")).to include('text-size-normal')
+      SiteSetting.default_text_size = "largest"
+      expect(helper.html_classes.split(" ")).to include('text-size-largest')
     end
   end
 
@@ -156,4 +179,15 @@ describe ApplicationHelper do
     end
   end
 
+  describe 'preloaded_json' do
+    it 'returns empty JSON if preloaded is empty' do
+      @preloaded = nil
+      expect(helper.preloaded_json).to eq('{}')
+    end
+
+    it 'escapes and strips invalid unicode and strips in json body' do
+      @preloaded = { test: %{["< \x80"]} }
+      expect(helper.preloaded_json).to eq(%{{"test":"[\\"\\u003c \uFFFD\\"]"}})
+    end
+  end
 end

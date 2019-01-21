@@ -15,9 +15,9 @@ module Jobs
       (@call_count % 24) == 1
     end
 
-    def execute(args)
+    def execute(args = nil)
       # Feature topics in categories
-      CategoryFeaturedTopic.feature_topics
+      CategoryFeaturedTopic.feature_topics(batched: true)
 
       # Update the scores of posts
       args = { min_topic_age: 1.day.ago }
@@ -28,8 +28,8 @@ module Jobs
       TopicTimer.ensure_consistency!
 
       # Forces rebake of old posts where needed, as long as no system avatars need updating
-      unless UserAvatar.where("last_gravatar_download_attempt IS NULL").limit(1).first
-        problems = Post.rebake_old(SiteSetting.rebake_old_posts_count)
+      if !SiteSetting.automatically_download_gravatars || !UserAvatar.where("last_gravatar_download_attempt IS NULL").limit(1).first
+        problems = Post.rebake_old(SiteSetting.rebake_old_posts_count, priority: :ultra_low)
         problems.each do |hash|
           post_id = hash[:post].id
           Discourse.handle_job_exception(hash[:ex], error_context(args, "Rebaking post id #{post_id}", post_id: post_id))
@@ -48,6 +48,8 @@ module Jobs
       if last_new_topic
         SiteSetting.min_new_topics_time = last_new_topic.created_at.to_i
       end
+
+      Category.auto_bump_topic!
 
       nil
     end

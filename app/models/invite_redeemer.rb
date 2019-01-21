@@ -8,12 +8,6 @@ InviteRedeemer = Struct.new(:invite, :username, :name, :password, :user_custom_f
       end
     end
 
-    # If `invite_passthrough_hours` is defined, allow them to re-use the invite link
-    # to login again.
-    if invite.redeemed_at && invite.redeemed_at >= SiteSetting.invite_passthrough_hours.hours.ago
-      return invited_user
-    end
-
     nil
   end
 
@@ -26,7 +20,16 @@ InviteRedeemer = Struct.new(:invite, :username, :name, :password, :user_custom_f
     end
     available_name = name || available_username
 
-    user = User.new(email: invite.email, username: available_username, name: available_name, active: true, trust_level: SiteSetting.default_invitee_trust_level)
+    user_params = {
+      email: invite.email,
+      username: available_username,
+      name: available_name,
+      active: false,
+      trust_level: SiteSetting.default_invitee_trust_level
+    }
+
+    user = User.unstage(user_params)
+    user = User.new(user_params) if user.nil?
 
     if !SiteSetting.must_approve_users? || (SiteSetting.must_approve_users? && invite.invited_by.staff?)
       user.approved = true
@@ -41,7 +44,7 @@ InviteRedeemer = Struct.new(:invite, :username, :name, :password, :user_custom_f
 
       user_fields.each do |f|
         field_val = field_params[f.id.to_s]
-        fields["user_field_#{f.id}"] = field_val[0...UserField.max_length] unless field_val.blank?
+        fields["#{User::USER_FIELD_PREFIX}#{f.id}"] = field_val[0...UserField.max_length] unless field_val.blank?
       end
       user.custom_fields = fields
     end
@@ -54,6 +57,12 @@ InviteRedeemer = Struct.new(:invite, :username, :name, :password, :user_custom_f
     end
 
     user.save!
+
+    if invite.via_email
+      user.email_tokens.create!(email: user.email)
+      user.activate
+    end
+
     User.find(user.id)
   end
 
@@ -79,8 +88,9 @@ InviteRedeemer = Struct.new(:invite, :username, :name, :password, :user_custom_f
   end
 
   def mark_invite_redeemed
-    Invite.where(['id = ? AND redeemed_at IS NULL AND created_at >= ?',
-                       invite.id, SiteSetting.invite_expiry_days.days.ago]).update_all('redeemed_at = CURRENT_TIMESTAMP')
+    Invite.where('id = ? AND redeemed_at IS NULL AND created_at >= ?',
+                 invite.id, SiteSetting.invite_expiry_days.days.ago)
+      .update_all('redeemed_at = CURRENT_TIMESTAMP')
   end
 
   def get_invited_user
@@ -91,7 +101,7 @@ InviteRedeemer = Struct.new(:invite, :username, :name, :password, :user_custom_f
   end
 
   def get_existing_user
-    User.where(admin: false).find_by_email(invite.email)
+    User.where(admin: false, staged: false).find_by_email(invite.email)
   end
 
   def add_to_private_topics_if_invited
@@ -116,7 +126,7 @@ InviteRedeemer = Struct.new(:invite, :username, :name, :password, :user_custom_f
   end
 
   def send_welcome_message
-    if Invite.where(['email = ?', invite.email]).update_all(['user_id = ?', invited_user.id]) == 1
+    if Invite.where('email = ?', invite.email).update_all(['user_id = ?', invited_user.id]) == 1
       invited_user.send_welcome_message = true
     end
   end

@@ -5,16 +5,14 @@ task 'plugin:install_all_official' do
   skip = Set.new([
     'customer-flair',
     'discourse-nginx-performance-report',
-    'hosted-site',
     'lazyYT',
     'poll',
+    'discourse-calendar'
   ])
 
   map = {
     'Canned Replies' => 'https://github.com/discourse/discourse-canned-replies',
-    'Spoiler Alert!' => 'https://github.com/discourse/discourse-spoiler-alert',
-    'staff-notes' => 'https://github.com/discourse/discourse-staff-notes',
-    'GitHub badges' => 'https://github.com/discourse/github_badges',
+    'discourse-perspective' => 'https://github.com/discourse/discourse-perspective-api'
   }
 
   #require 'plugin/metadata'

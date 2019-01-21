@@ -11,10 +11,8 @@ describe Jobs::PullHotlinkedImages do
 
   before do
     stub_request(:get, image_url).to_return(body: png, headers: { "Content-Type" => "image/png" })
-    stub_request(:head, image_url)
-    stub_request(:head, broken_image_url).to_return(status: 404)
+    stub_request(:get, broken_image_url).to_return(status: 404)
     stub_request(:get, large_image_url).to_return(body: large_png, headers: { "Content-Type" => "image/png" })
-    stub_request(:head, large_image_url)
     SiteSetting.crawl_images = true
     SiteSetting.download_remote_images_to_local = true
     SiteSetting.max_image_size_kb = 2
@@ -34,6 +32,7 @@ describe Jobs::PullHotlinkedImages do
 
   describe '#execute' do
     before do
+      SiteSetting.queue_jobs = false
       FastImage.expects(:size).returns([100, 100]).at_least_once
     end
 
@@ -59,7 +58,6 @@ describe Jobs::PullHotlinkedImages do
     it 'replaces images without extension' do
       url = image_url.sub(/\.[a-zA-Z0-9]+$/, '')
       stub_request(:get, url).to_return(body: png, headers: { "Content-Type" => "image/png" })
-      stub_request(:head, url)
       post = Fabricate(:post, raw: "<img src='#{url}'>")
 
       Jobs::PullHotlinkedImages.new.execute(post_id: post.id)
@@ -75,8 +73,8 @@ describe Jobs::PullHotlinkedImages do
 
       before do
         SiteSetting.queue_jobs = true
-        stub_request(:get, url).to_return(body: '')
         stub_request(:head, url)
+        stub_request(:get, url).to_return(body: '')
         stub_request(:get, api_url).to_return(body: "{
           \"query\": {
             \"pages\": {
@@ -91,7 +89,6 @@ describe Jobs::PullHotlinkedImages do
             }
           }
         }")
-        stub_request(:head, api_url)
       end
 
       it 'replaces image src' do
@@ -106,12 +103,12 @@ describe Jobs::PullHotlinkedImages do
       end
 
       it 'all combinations' do
-        post = Fabricate(:post, raw: "
-<img src='#{image_url}'>
-#{url}
-<img src='#{broken_image_url}'>
-<a href='#{url}'><img src='#{large_image_url}'></a>
-        ")
+        post = Fabricate(:post, raw: <<~BODY)
+        <img src='#{image_url}'>
+        #{url}
+        <img src='#{broken_image_url}'>
+        <a href='#{url}'><img src='#{large_image_url}'></a>
+        BODY
 
         Jobs::ProcessPost.new.execute(post_id: post.id)
         Jobs::PullHotlinkedImages.new.execute(post_id: post.id)
@@ -121,7 +118,7 @@ describe Jobs::PullHotlinkedImages do
 
         expect(post.cooked).to match(/<p><img src=.*\/uploads/)
         expect(post.cooked).to match(/<img src=.*\/uploads.*\ class="thumbnail"/)
-        expect(post.cooked).to match(/<span class="broken-image fa fa-chain-broken/)
+        expect(post.cooked).to match(/<span class="broken-image/)
         expect(post.cooked).to match(/<div class="large-image-placeholder">/)
       end
     end

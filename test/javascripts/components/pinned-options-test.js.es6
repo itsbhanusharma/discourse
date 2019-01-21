@@ -1,5 +1,5 @@
-import componentTest from 'helpers/component-test';
-import Topic from 'discourse/models/topic';
+import componentTest from "helpers/component-test";
+import Topic from "discourse/models/topic";
 
 const buildTopic = function() {
   return Topic.create({
@@ -10,10 +10,15 @@ const buildTopic = function() {
   });
 };
 
-moduleForComponent('pinned-options', { integration: true });
+moduleForComponent("pinned-options", {
+  integration: true,
+  beforeEach: function() {
+    this.set("subject", selectKit());
+  }
+});
 
-componentTest('updating the content refreshes the list', {
-  template: '{{pinned-options value=pinned topic=topic}}',
+componentTest("updating the content refreshes the list", {
+  template: "{{pinned-options value=pinned topic=topic}}",
 
   beforeEach() {
     this.siteSettings.automatically_unpin_topics = false;
@@ -21,15 +26,21 @@ componentTest('updating the content refreshes the list', {
     this.set("pinned", true);
   },
 
-  test(assert) {
-    expandSelectKit();
+  async test(assert) {
+    assert.equal(
+      this.get("subject")
+        .header()
+        .name(),
+      "pinned"
+    );
 
-    andThen(() => assert.equal(selectKit().header.name(), "Pinned") );
+    await this.set("pinned", false);
 
-    andThen(() => this.set("pinned", false));
-
-    andThen(() => {
-      assert.equal(selectKit().header.name(), "Unpinned");
-    });
+    assert.equal(
+      this.get("subject")
+        .header()
+        .name(),
+      "unpinned"
+    );
   }
 });

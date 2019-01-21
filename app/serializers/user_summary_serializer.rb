@@ -1,7 +1,7 @@
 class UserSummarySerializer < ApplicationSerializer
 
   class TopicSerializer < ListableTopicSerializer
-    attributes :category_id
+    attributes :category_id, :like_count
   end
 
   class ReplySerializer < ApplicationSerializer
@@ -18,8 +18,22 @@ class UserSummarySerializer < ApplicationSerializer
     end
   end
 
-  class UserWithCountSerializer < BasicUserSerializer
-    attributes :count, :name
+  class UserWithCountSerializer < ApplicationSerializer
+    attributes :id, :username, :name, :count, :avatar_template
+
+    def include_name?
+      SiteSetting.enable_names?
+    end
+
+    def avatar_template
+      User.avatar_template(object[:username], object[:uploaded_avatar_id])
+    end
+  end
+
+  class CategoryWithCountsSerializer < ApplicationSerializer
+    attributes :topic_count, :post_count,
+      :id, :name, :color, :text_color, :slug,
+      :read_restricted, :parent_category_id
   end
 
   has_many :topics, serializer: TopicSerializer
@@ -29,6 +43,7 @@ class UserSummarySerializer < ApplicationSerializer
   has_many :most_liked_users, serializer: UserWithCountSerializer, embed: :object
   has_many :most_replied_to_users, serializer: UserWithCountSerializer, embed: :object
   has_many :badges, serializer: UserBadgeSerializer, embed: :object
+  has_many :top_categories, serializer: CategoryWithCountsSerializer, embed: :object
 
   attributes :likes_given,
              :likes_received,

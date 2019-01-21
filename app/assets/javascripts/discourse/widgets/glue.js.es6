@@ -1,9 +1,8 @@
-import { diff, patch } from 'virtual-dom';
-import { queryRegistry } from 'discourse/widgets/widget';
-import DirtyKeys from 'discourse/lib/dirty-keys';
+import { diff, patch } from "virtual-dom";
+import { queryRegistry } from "discourse/widgets/widget";
+import DirtyKeys from "discourse/lib/dirty-keys";
 
 export default class WidgetGlue {
-
   constructor(name, register, attrs) {
     this._tree = null;
     this._rootNode = null;
@@ -12,8 +11,10 @@ export default class WidgetGlue {
     this._timeout = null;
     this.dirtyKeys = new DirtyKeys(name);
 
-    this._widgetClass = queryRegistry(name) || this.register.lookupFactory(`widget:${name}`);
+    this._widgetClass =
+      queryRegistry(name) || this.register.lookupFactory(`widget:${name}`);
     if (!this._widgetClass) {
+      // eslint-disable-next-line no-console
       console.error(`Error: Could not find widget: ${name}`);
     }
   }
@@ -24,16 +25,24 @@ export default class WidgetGlue {
   }
 
   queueRerender() {
-    this._timeout = Ember.run.scheduleOnce('render', this, this.rerenderWidget);
+    this._timeout = Ember.run.scheduleOnce("render", this, this.rerenderWidget);
   }
 
   rerenderWidget() {
     Ember.run.cancel(this._timeout);
-    const newTree = new this._widgetClass(
-      this.attrs,
-      this.register,
-      { dirtyKeys: this.dirtyKeys }
-    );
+
+    // in test mode return early if store cannot be found
+    if (Ember.testing) {
+      try {
+        this.register.lookup("service:store");
+      } catch (e) {
+        return;
+      }
+    }
+
+    const newTree = new this._widgetClass(this.attrs, this.register, {
+      dirtyKeys: this.dirtyKeys
+    });
     const patches = diff(this._tree || this._rootNode, newTree);
 
     newTree._rerenderable = this;
@@ -45,5 +54,3 @@ export default class WidgetGlue {
     Ember.run.cancel(this._timeout);
   }
 }
-
-

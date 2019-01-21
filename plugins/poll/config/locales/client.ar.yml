@@ -23,8 +23,6 @@ ar:
         many: "العديد من الأصوات"
         other: "مجموع الأصوات"
       average_rating: "متوسط التقييمات: <strong>%{average}</strong> "
-      public:
-        title: "الأصوات تظهر للعموم."
       multiple:
         help:
           at_least_min_options:
@@ -75,6 +73,7 @@ ar:
         help:
           options_count: أدخل خيارين على الأقل
           invalid_values: يجب أن تكون القيمة الدّنيا أصغر من القيمة العليا.
+          min_step_value: قيمة الخطوة الدنيا هي 1
         poll_type:
           label: النوع
           regular: اختيار من متعدد

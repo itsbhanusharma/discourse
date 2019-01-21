@@ -16,7 +16,12 @@ de:
         other: "abgegebene Stimmen"
       average_rating: "Durchschnittliche Bewertung: <strong>%{average}</strong>"
       public:
-        title: "Abgegebene Stimmen werden veröffentlicht."
+        title: "Stimmen sind <strong>öffentlich</strong>."
+      results:
+        vote:
+          title: "Ergebnisse werden <strong>nach Stimmabgabe</strong> angezeigt."
+        closed:
+          title: "Ergebnisse werden angezeigt <strong>nach Ende der Abstimmung</strong>."
       multiple:
         help:
           at_least_min_options:
@@ -46,6 +51,9 @@ de:
         title: "Umfrage beenden"
         label: "Beenden"
         confirm: "Möchtest du diese Umfrage wirklich beenden?"
+      automatic_close:
+        closes_in: "schließt in <strong>%{timeLeft}</strong>"
+        age: "geschlossen <strong>%{age}</strong>"
       error_while_toggling_status: "Entschuldige, beim Wechseln des Status dieser Umfrage ist ein Fehler aufgetreten."
       error_while_casting_votes: "Entschuldige, beim Abgeben deiner Stimme ist ein Fehler aufgetreten."
       error_while_fetching_voters: "Entschuldige, beim Anzeigen der Teilnehmer ist ein Fehler aufgetreten."
@@ -55,11 +63,17 @@ de:
         help:
           options_count: Gib mindestens 2 Optionen ein
           invalid_values: Der Minimalwert muss kleiner sein als der Maximalwert.
+          min_step_value: Die minimale Schrittweite beträgt 1.
         poll_type:
           label: Art
           regular: Einfachauswahl
           multiple: Mehrfachauswahl
           number: Bewertung
+        poll_result:
+          label: Ergebnisse
+          always: Immer sichtbar
+          vote: Nach Stimmabgabe
+          closed: Nach Ende der Abstimmung
         poll_config:
           max: max.
           min: min.
@@ -68,3 +82,5 @@ de:
           label: Anzeigen, wer abgestimmt hat
         poll_options:
           label: Bitte gib eine Umfrageoption pro Zeile ein
+        automatic_close:
+          label: Umfrage automatisch schließen

@@ -22,6 +22,7 @@ describe TopicEmbed do
 
     context 'creation of a post' do
       let!(:post) { TopicEmbed.import(user, url, title, contents) }
+      let(:topic_embed) { TopicEmbed.find_by(post: post) }
 
       it "works as expected with a new URL" do
         expect(post).to be_present
@@ -40,9 +41,21 @@ describe TopicEmbed do
         expect(post.topic.category).to eq(embeddable_host.category)
       end
 
-      it "Supports updating the post" do
-        post = TopicEmbed.import(user, url, title, "muhahaha new contents!")
-        expect(post.cooked).to match(/new contents/)
+      it "Supports updating the post content" do
+        expect do
+          TopicEmbed.import(user, url, title, "muhahaha new contents!")
+        end.to change { topic_embed.reload.content_sha1 }
+
+        expect(topic_embed.post.cooked).to match(/new contents/)
+      end
+
+      it "Supports updating the post author" do
+        new_user = Fabricate(:user)
+        TopicEmbed.import(new_user, url, title, contents)
+
+        topic_embed.reload
+        expect(topic_embed.post.user).to eq(new_user)
+        expect(topic_embed.post.topic.user).to eq(new_user)
       end
 
       it "Should leave uppercase Feed Entry URL untouched in content" do
@@ -58,6 +71,38 @@ describe TopicEmbed do
       end
     end
 
+    context "post creation supports markdown rendering" do
+      before do
+        SiteSetting.embed_support_markdown = true
+      end
+
+      it "works as expected" do
+        post = TopicEmbed.import(user, url, title, "some random content")
+        expect(post).to be_present
+
+        # It uses regular rendering
+        expect(post.cook_method).to eq(Post.cook_methods[:regular])
+      end
+    end
+  end
+
+  context '.topic_id_for_embed' do
+    it "returns correct topic id irrespective of url protocol" do
+      topic_embed = Fabricate(:topic_embed, embed_url: "http://example.com/post/248")
+
+      expect(TopicEmbed.topic_id_for_embed('http://exAMPle.com/post/248')).to eq(topic_embed.topic_id)
+      expect(TopicEmbed.topic_id_for_embed('https://example.com/post/248/')).to eq(topic_embed.topic_id)
+
+      expect(TopicEmbed.topic_id_for_embed('http://example.com/post/248/2')).to eq(nil)
+      expect(TopicEmbed.topic_id_for_embed('http://examples.com/post/248')).to eq(nil)
+      expect(TopicEmbed.topic_id_for_embed('http://example.com/post/24')).to eq(nil)
+      expect(TopicEmbed.topic_id_for_embed('http://example.com/post')).to eq(nil)
+    end
+
+    it "finds the topic id when the embed_url contains a query string" do
+      topic_embed = Fabricate(:topic_embed, embed_url: "http://example.com/post/248?key=foo")
+      expect(TopicEmbed.topic_id_for_embed('http://example.com/post/248?key=foo')).to eq(topic_embed.topic_id)
+    end
   end
 
   describe '.find_remote' do
@@ -233,25 +278,4 @@ describe TopicEmbed do
     end
   end
 
-  context ".escape_uri" do
-    it "doesn't escape simple URL" do
-      url = TopicEmbed.escape_uri('http://example.com/foo/bar')
-      expect(url).to eq('http://example.com/foo/bar')
-    end
-
-    it "escapes unsafe chars" do
-      url = TopicEmbed.escape_uri("http://example.com/?a=\11\15")
-      expect(url).to eq('http://example.com/?a=%09%0D')
-    end
-
-    it "escapes non-ascii chars" do
-      url = TopicEmbed.escape_uri('http://example.com/ماهی')
-      expect(url).to eq('http://example.com/%D9%85%D8%A7%D9%87%DB%8C')
-    end
-
-    it "doesn't escape already escaped chars" do
-      url = TopicEmbed.escape_uri('http://example.com/foo%20bar/foo bar/')
-      expect(url).to eq('http://example.com/foo%20bar/foo%20bar/')
-    end
-  end
 end

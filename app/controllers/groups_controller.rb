@@ -1,54 +1,141 @@
 class GroupsController < ApplicationController
-
-  before_action :ensure_logged_in, only: [
+  requires_login only: [
     :set_notifications,
     :mentionable,
     :messageable,
+    :check_name,
     :update,
-    :messages,
     :histories,
     :request_membership,
-    :search
+    :search,
+    :new
   ]
 
   skip_before_action :preload_json, :check_xhr, only: [:posts_feed, :mentions_feed]
+  skip_before_action :check_xhr, only: [:show]
+
+  TYPE_FILTERS = {
+    my: Proc.new { |groups, user|
+      raise Discourse::NotFound unless user
+      Group.member_of(groups, user)
+    },
+    owner: Proc.new { |groups, user|
+      raise Discourse::NotFound unless user
+      Group.owner_of(groups, user)
+    },
+    public: Proc.new { |groups|
+      groups.where(public_admission: true, automatic: false)
+    },
+    close: Proc.new { |groups|
+      groups.where(
+        public_admission: false,
+        automatic: false
+      )
+    },
+    automatic: Proc.new { |groups|
+      groups.where(automatic: true)
+    }
+  }
 
   def index
-    unless SiteSetting.enable_group_directory?
+    unless SiteSetting.enable_group_directory? || current_user&.staff?
       raise Discourse::InvalidAccess.new(:enable_group_directory)
     end
 
     page_size = 30
     page = params[:page]&.to_i || 0
+    order = %w{name user_count}.delete(params[:order])
+    dir = params[:asc] ? 'ASC' : 'DESC'
+    groups = Group.visible_groups(current_user, order ? "#{order} #{dir}" : nil)
 
-    groups = Group.visible_groups(current_user)
+    if (filter = params[:filter]).present?
+      groups = Group.search_groups(filter, groups: groups)
+    end
+
+    type_filters = TYPE_FILTERS.keys
+
+    if username = params[:username]
+      groups = TYPE_FILTERS[:my].call(groups, User.find_by_username(username))
+      type_filters = type_filters - [:my, :owner]
+    end
 
     unless guardian.is_staff?
       # hide automatic groups from all non stuff to de-clutter page
-      groups = groups.where(automatic: false)
+      groups = groups.where("automatic IS FALSE OR groups.id = #{Group::AUTO_GROUPS[:moderators]}")
+      type_filters.delete(:automatic)
     end
-
-    count = groups.count
-    groups = groups.offset(page * page_size).limit(page_size)
 
     if Group.preloaded_custom_field_names.present?
       Group.preload_custom_fields(groups, Group.preloaded_custom_field_names)
     end
 
-    group_user_ids = GroupUser.where(group: groups, user: current_user).pluck(:group_id)
+    if type = params[:type]&.to_sym
+      callback = TYPE_FILTERS[type]
+      if !callback
+        raise Discourse::InvalidParameters.new(:type)
+      end
+      groups = callback.call(groups, current_user)
+    end
+
+    if current_user
+      group_users = GroupUser.where(group: groups, user: current_user)
+      user_group_ids = group_users.pluck(:group_id)
+      owner_group_ids = group_users.where(owner: true).pluck(:group_id)
+    else
+      type_filters = type_filters - [:my, :owner]
+    end
+
+    count = groups.count
+    groups = groups.offset(page * page_size).limit(page_size)
 
     render_json_dump(
-      groups: serialize_data(groups, BasicGroupSerializer),
+      groups: serialize_data(groups,
+        BasicGroupSerializer,
+        user_group_ids: user_group_ids || [],
+        owner_group_ids: owner_group_ids || []
+      ),
       extras: {
-        group_user_ids: group_user_ids
+        type_filters: type_filters
       },
       total_rows_groups: count,
-      load_more_groups: groups_path(page: page + 1)
+      load_more_groups: groups_path(
+        page: page + 1,
+        type: type,
+        order: order,
+        asc: params[:asc],
+        filter: filter
+      ),
     )
   end
 
   def show
-    render_serialized(find_group(:id), GroupShowSerializer, root: 'basic_group')
+    respond_to do |format|
+      group = find_group(:id)
+
+      format.html do
+        @title = group.full_name.present? ? group.full_name.capitalize : group.name
+        @description_meta = group.bio_cooked.present? ? PrettyText.excerpt(group.bio_cooked, 300) : @title
+        render :show
+      end
+
+      format.json do
+        groups = Group.visible_groups(current_user)
+
+        if !guardian.is_staff?
+          groups = groups.where(automatic: false)
+        end
+
+        render_json_dump(
+          group: serialize_data(group, GroupShowSerializer, root: nil),
+          extras: {
+            visible_group_names: groups.pluck(:name)
+          }
+        )
+      end
+    end
+  end
+
+  def new
   end
 
   def edit
@@ -56,11 +143,10 @@ class GroupsController < ApplicationController
 
   def update
     group = Group.find(params[:id])
-    guardian.ensure_can_edit!(group)
+    guardian.ensure_can_edit!(group) unless current_user.admin
 
-    if group.update_attributes(group_params)
+    if group.update(group_params(automatic: group.automatic))
       GroupActionLogger.new(current_user, group).log_change_group_settings
-
       render json: success_json
     else
       render_json_error(group)
@@ -88,16 +174,8 @@ class GroupsController < ApplicationController
     render 'posts/latest', formats: [:rss]
   end
 
-  def topics
-    group = find_group(:group_id)
-    posts = group.posts_for(
-      guardian,
-      params.permit(:before_post_id, :category_id)
-    ).where(post_number: 1).limit(20)
-    render_serialized posts.to_a, GroupPostSerializer
-  end
-
   def mentions
+    raise Discourse::NotFound unless SiteSetting.enable_mentions?
     group = find_group(:group_id)
     posts = group.mentioned_posts_for(
       guardian,
@@ -107,6 +185,7 @@ class GroupsController < ApplicationController
   end
 
   def mentions_feed
+    raise Discourse::NotFound unless SiteSetting.enable_mentions?
     group = find_group(:group_id)
     @posts = group.mentioned_posts_for(
       guardian,
@@ -118,45 +197,57 @@ class GroupsController < ApplicationController
     render 'posts/latest', formats: [:rss]
   end
 
-  def messages
-    group = find_group(:group_id)
-    posts = if guardian.can_see_group_messages?(group)
-      group.messages_for(
-        guardian,
-        params.permit(:before_post_id, :category_id)
-      ).where(post_number: 1).limit(20).to_a
-    else
-      []
-    end
-    render_serialized posts, GroupPostSerializer
-  end
-
   def members
     group = find_group(:group_id)
 
     limit = (params[:limit] || 20).to_i
     offset = params[:offset].to_i
+
+    if limit < 0
+      raise Discourse::InvalidParameters.new(:limit)
+    end
+
+    if offset < 0
+      raise Discourse::InvalidParameters.new(:offset)
+    end
+
     dir = (params[:desc] && !params[:desc].blank?) ? 'DESC' : 'ASC'
     order = ""
 
     if params[:order] && %w{last_posted_at last_seen_at}.include?(params[:order])
       order = "#{params[:order]} #{dir} NULLS LAST"
+    elsif params[:order] == 'added_at'
+      order = "group_users.created_at #{dir}"
     end
 
     users = group.users.human_users
-
     total = users.count
+
+    if (filter = params[:filter]).present?
+      filter = filter.split(',') if filter.include?(',')
+
+      if current_user&.admin
+        users = users.filter_by_username_or_email(filter)
+      else
+        users = users.filter_by_username(filter)
+      end
+    end
+
+    users = users.select('users.*, group_users.created_at as added_at')
+
     members = users
       .order('NOT group_users.owner')
       .order(order)
       .order(username_lower: dir)
       .limit(limit)
       .offset(offset)
+      .includes(:primary_group)
 
     owners = users
       .order(order)
       .order(username_lower: dir)
       .where('group_users.owner')
+      .includes(:primary_group)
 
     render json: {
       members: serialize_data(members, GroupUserSerializer),
@@ -173,20 +264,7 @@ class GroupsController < ApplicationController
     group = Group.find(params[:id])
     group.public_admission ? ensure_logged_in : guardian.ensure_can_edit!(group)
 
-    users =
-      if params[:usernames].present?
-        User.where(username: params[:usernames].split(","))
-      elsif params[:user_ids].present?
-        User.find(params[:user_ids].split(","))
-      elsif params[:user_emails].present?
-        User.with_email(params[:user_emails].split(","))
-      else
-        raise Discourse::InvalidParameters.new(
-          'user_ids or usernames or user_emails must be present'
-        )
-      end
-
-    raise Discourse::NotFound if users.blank?
+    users = users_from_params
 
     if group.public_admission
       if !guardian.can_log_group_changes?(group) && current_user != users.first
@@ -198,24 +276,26 @@ class GroupsController < ApplicationController
       end
     end
 
-    users.each do |user|
-      if !group.users.include?(user)
+    if (usernames = group.users.where(id: users.pluck(:id)).pluck(:username)).present?
+      render_json_error(I18n.t(
+        "groups.errors.member_already_exist",
+        username: usernames.sort.join(", "),
+        count: usernames.size
+      ))
+    else
+      users.each do |user|
         group.add(user)
         GroupActionLogger.new(current_user, group).log_add_user_to_group(user)
-      else
-        return render_json_error I18n.t('groups.errors.member_already_exist', username: user.username)
       end
-    end
 
-    if group.save
-      render json: success_json
-    else
-      render_json_error(group)
+      render json: success_json.merge!(
+        usernames: users.map(&:username)
+      )
     end
   end
 
   def mentionable
-    group = find_group(:name)
+    group = find_group(:group_id, ensure_can_see: false)
 
     if group
       render json: { mentionable: Group.mentionable(current_user).where(id: group.id).present? }
@@ -225,7 +305,7 @@ class GroupsController < ApplicationController
   end
 
   def messageable
-    group = find_group(:name)
+    group = find_group(:group_id, ensure_can_see: false)
 
     if group
       render json: { messageable: Group.messageable(current_user).where(id: group.id).present? }
@@ -234,25 +314,26 @@ class GroupsController < ApplicationController
     end
   end
 
+  def check_name
+    group_name = params.require(:group_name)
+    checker = UsernameCheckerService.new(allow_reserved_username: true)
+    render json: checker.check_username(group_name, nil)
+  end
+
   def remove_member
-    group = Group.find(params[:id])
+    group = Group.find_by(id: params[:id])
+    raise Discourse::NotFound unless group
     group.public_exit ? ensure_logged_in : guardian.ensure_can_edit!(group)
 
-    user =
-      if params[:user_id].present?
-        User.find_by(id: params[:user_id])
-      elsif params[:username].present?
-        User.find_by_username(params[:username])
-      elsif params[:user_email].present?
-        User.find_by_email(params[:user_email])
-      else
-        raise Discourse::InvalidParameters.new('user_id or username must be present')
-      end
+    # Maintain backwards compatibility
+    params[:usernames] = params[:username] if params[:username].present?
+    params[:user_ids] = params[:user_id] if params[:user_id].present?
+    params[:user_emails] = params[:user_email] if params[:user_email].present?
 
-    raise Discourse::NotFound unless user
+    users = users_from_params
 
     if group.public_exit
-      if !guardian.can_log_group_changes?(group) && current_user != user
+      if !guardian.can_log_group_changes?(group) && current_user != users.first
         raise Discourse::InvalidAccess
       end
 
@@ -261,16 +342,15 @@ class GroupsController < ApplicationController
       end
     end
 
-    user.primary_group_id = nil if user.primary_group_id == group.id
-
-    group.remove(user)
-    GroupActionLogger.new(current_user, group).log_remove_user_from_group(user)
-
-    if group.save && user.save
-      render json: success_json
-    else
-      render_json_error(group)
+    users.each do |user|
+      group.remove(user)
+      GroupActionLogger.new(current_user, group).log_remove_user_from_group(user)
     end
+
+    render json: success_json.merge!(
+      usernames: users.map(&:username)
+    )
+
   end
 
   def request_membership
@@ -319,7 +399,7 @@ class GroupsController < ApplicationController
 
   def histories
     group = find_group(:group_id)
-    guardian.ensure_can_edit!(group)
+    guardian.ensure_can_edit!(group) unless current_user.admin
 
     page_size = 25
     offset = (params[:offset] && params[:offset].to_i) || 0
@@ -356,25 +436,73 @@ class GroupsController < ApplicationController
 
   private
 
-  def group_params
-    params.require(:group).permit(
-      :flair_url,
-      :flair_bg_color,
-      :flair_color,
-      :bio_raw,
-      :full_name,
-      :public_admission,
-      :public_exit,
-      :allow_membership_requests,
-      :membership_request_template,
-    )
+  def group_params(automatic: false)
+    permitted_params =
+      if automatic
+        %i{
+          visibility_level
+          mentionable_level
+          messageable_level
+          default_notification_level
+        }
+      else
+        default_params = %i{
+          mentionable_level
+          messageable_level
+          title
+          flair_url
+          flair_bg_color
+          flair_color
+          bio_raw
+          public_admission
+          public_exit
+          allow_membership_requests
+          full_name
+          default_notification_level
+          membership_request_template
+        }
+
+        if current_user.admin
+          default_params.push(*[
+            :incoming_email,
+            :primary_group,
+            :visibility_level,
+            :name,
+            :grant_trust_level,
+            :automatic_membership_email_domains,
+            :automatic_membership_retroactive
+          ])
+        end
+
+        default_params
+      end
+
+    params.require(:group).permit(*permitted_params)
   end
 
-  def find_group(param_name)
+  def find_group(param_name, ensure_can_see: true)
     name = params.require(param_name)
-    group = Group.find_by("lower(name) = ?", name.downcase)
-    guardian.ensure_can_see!(group)
+    group = Group
+    group = group.find_by("lower(name) = ?", name.downcase)
+    guardian.ensure_can_see!(group) if ensure_can_see
     group
   end
 
+  def users_from_params
+    if params[:usernames].present?
+      users = User.where(username_lower: params[:usernames].split(",").map(&:downcase))
+      raise Discourse::InvalidParameters.new(:usernames) if users.blank?
+    elsif params[:user_ids].present?
+      users = User.where(id: params[:user_ids].split(","))
+      raise Discourse::InvalidParameters.new(:user_ids) if users.blank?
+    elsif params[:user_emails].present?
+      users = User.with_email(params[:user_emails].split(","))
+      raise Discourse::InvalidParameters.new(:user_emails) if users.blank?
+    else
+      raise Discourse::InvalidParameters.new(
+        'user_ids or usernames or user_emails must be present'
+      )
+    end
+    users
+  end
 end

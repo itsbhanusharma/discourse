@@ -14,6 +14,31 @@ require 'mocha/api'
 require 'certified'
 require 'webmock/rspec'
 
+class RspecErrorTracker
+
+  def self.last_exception=(ex)
+    @ex = ex
+  end
+
+  def self.last_exception
+    @ex
+  end
+
+  def initialize(app, config = {})
+    @app = app
+  end
+
+  def call(env)
+    begin
+      @app.call(env)
+    rescue => e
+      RspecErrorTracker.last_exception = e
+      raise e
+    end
+  ensure
+  end
+end
+
 ENV["RAILS_ENV"] ||= 'test'
 require File.expand_path("../../config/environment", __FILE__)
 require 'rspec/rails'
@@ -45,6 +70,7 @@ RSpec.configure do |config|
   config.include MessageBus
   config.include RSpecHtmlMatchers
   config.include IntegrationHelpers, type: :request
+  config.include SiteSettingsHelpers
   config.mock_framework = :mocha
   config.order = 'random'
   config.infer_spec_type_from_file_location!
@@ -96,6 +122,25 @@ RSpec.configure do |config|
     end
   end
 
+  config.after :each do |x|
+    if x.exception && ex = RspecErrorTracker.last_exception
+      # magic in a cause if we have none
+      unless x.exception.cause
+        class << x.exception
+          attr_accessor :cause
+        end
+        x.exception.cause = ex
+      end
+    end
+
+    unfreeze_time
+    ActionMailer::Base.deliveries.clear
+
+    if ActiveRecord::Base.connection_pool.stat[:busy] > 1
+      raise ActiveRecord::Base.connection_pool.stat.inspect
+    end
+  end
+
   config.before :each do |x|
     # TODO not sure about this, we could use a mock redis implementation here:
     #   this gives us really clean "flush" semantics, howere the side-effect is that
@@ -106,7 +151,8 @@ RSpec.configure do |config|
     #   perf benefit seems low (shaves 20 secs off a 4 minute test suite)
     #
     # $redis = DiscourseMockRedis.new
-    #
+
+    RateLimiter.disable
     PostActionNotifier.disable
     SearchIndexer.disable
     UserActionCreator.disable
@@ -115,7 +161,6 @@ RSpec.configure do |config|
     SiteSetting.provider.all.each do |setting|
       SiteSetting.remove_override!(setting.name)
     end
-    SiteSetting.defaults.site_locale = SiteSettings::DefaultsProvider::DEFAULT_LOCALE
 
     # very expensive IO operations
     SiteSetting.automatically_download_gravatars = false
@@ -125,14 +170,30 @@ RSpec.configure do |config|
 
     I18n.locale = :en
 
+    RspecErrorTracker.last_exception = nil
+
     if $test_cleanup_callbacks
       $test_cleanup_callbacks.reverse_each(&:call)
       $test_cleanup_callbacks = nil
     end
   end
 
+  config.before(:each, type: :multisite) do
+    Rails.configuration.multisite = true
+
+    RailsMultisite::ConnectionManagement.config_filename =
+      "spec/fixtures/multisite/two_dbs.yml"
+  end
+
+  config.after(:each, type: :multisite) do
+    ActiveRecord::Base.clear_all_connections!
+    Rails.configuration.multisite = false
+    RailsMultisite::ConnectionManagement.clear_settings!
+    ActiveRecord::Base.establish_connection
+  end
+
   class TestCurrentUserProvider < Auth::DefaultCurrentUserProvider
-    def log_on_user(user, session, cookies)
+    def log_on_user(user, session, cookies, opts = {})
       session[:current_user_id] = user.id
       super
     end
@@ -140,6 +201,22 @@ RSpec.configure do |config|
     def log_off_user(session, cookies)
       session[:current_user_id] = nil
       super
+    end
+  end
+
+  # Normally we `use_transactional_fixtures` to clear out a database after a test
+  # runs. However, this does not apply to tests done for multisite. The second time
+  # a test runs you can end up with stale data that breaks things. This method will
+  # force a rollback after using a multisite connection.
+  def test_multisite_connection(name)
+    RailsMultisite::ConnectionManagement.with_connection(name) do
+      ActiveRecord::Base.transaction do
+        begin
+          yield
+        ensure
+          throw raise ActiveRecord::Rollback
+        end
+      end
     end
   end
 
@@ -223,4 +300,19 @@ def file_from_fixtures(filename, directory = "images")
   FileUtils.mkdir_p("#{Rails.root}/tmp/spec") unless Dir.exists?("#{Rails.root}/tmp/spec")
   FileUtils.cp("#{Rails.root}/spec/fixtures/#{directory}/#{filename}", "#{Rails.root}/tmp/spec/#{filename}")
   File.new("#{Rails.root}/tmp/spec/#{filename}")
+end
+
+def has_trigger?(trigger_name)
+  DB.exec(<<~SQL) != 0
+    SELECT 1
+    FROM INFORMATION_SCHEMA.TRIGGERS
+    WHERE trigger_name = '#{trigger_name}'
+  SQL
+end
+
+def silence_stdout
+  STDOUT.stubs(:write)
+  yield
+ensure
+  STDOUT.unstub(:write)
 end

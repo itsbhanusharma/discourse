@@ -1,7 +1,9 @@
 require 'site_setting_extension'
+require_dependency 'global_path'
 require_dependency 'site_settings/yaml_loader'
 
 class SiteSetting < ActiveRecord::Base
+  extend GlobalPath
   extend SiteSettingExtension
 
   validates_presence_of :name
@@ -19,7 +21,6 @@ class SiteSetting < ActiveRecord::Base
   end
 
   load_settings(File.join(Rails.root, 'config', 'site_settings.yml'))
-  setup_deprecated_methods
 
   unless Rails.env.test? && ENV['LOAD_PLUGINS'] != "1"
     Dir[File.join(Rails.root, "plugins", "*", "config", "settings.yml")].each do |file|
@@ -27,10 +28,11 @@ class SiteSetting < ActiveRecord::Base
     end
   end
 
+  setup_deprecated_methods
   client_settings << :available_locales
 
   def self.available_locales
-    LocaleSiteSetting.values.map { |e| e[:value] }.join('|')
+    LocaleSiteSetting.values.to_json
   end
 
   def self.topic_title_length
@@ -38,7 +40,7 @@ class SiteSetting < ActiveRecord::Base
   end
 
   def self.private_message_title_length
-    min_private_message_title_length..max_topic_title_length
+    min_personal_message_title_length..max_topic_title_length
   end
 
   def self.post_length
@@ -50,7 +52,7 @@ class SiteSetting < ActiveRecord::Base
   end
 
   def self.private_message_post_length
-    min_private_message_post_length..max_post_length
+    min_personal_message_post_length..max_post_length
   end
 
   def self.top_menu_items
@@ -77,7 +79,7 @@ class SiteSetting < ActiveRecord::Base
 
     host = URI.parse(src).host
     return !(setting.split('|').include?(host))
-  rescue URI::InvalidURIError
+  rescue URI::Error
     return true
   end
 
@@ -128,26 +130,117 @@ class SiteSetting < ActiveRecord::Base
       SiteSetting.enable_s3_uploads ? SiteSetting.s3_upload_bucket : GlobalSetting.s3_bucket
     end
 
+    def self.s3_endpoint
+      SiteSetting.enable_s3_uploads ? SiteSetting.s3_endpoint : GlobalSetting.s3_endpoint
+    end
+
+    def self.s3_force_path_style
+      SiteSetting.enable_s3_uploads ? SiteSetting.s3_force_path_style : GlobalSetting.s3_force_path_style
+    end
+
     def self.enable_s3_uploads
       SiteSetting.enable_s3_uploads || GlobalSetting.use_s3?
     end
 
+    def self.s3_base_url
+      path = self.s3_upload_bucket.split("/", 2)[1]
+      "#{self.absolute_base_url}#{path ? '/' + path : ''}"
+    end
+
     def self.absolute_base_url
-      bucket = SiteSetting.enable_s3_uploads ? Discourse.store.s3_bucket_name : GlobalSetting.s3_bucket
+      url_basename = SiteSetting.s3_endpoint.split('/')[-1]
+      bucket = SiteSetting.enable_s3_uploads ? Discourse.store.s3_bucket_name : GlobalSetting.s3_bucket_name
 
       # cf. http://docs.aws.amazon.com/general/latest/gr/rande.html#s3_region
-      if SiteSetting.Upload.s3_region == "us-east-1"
-        "//#{bucket}.s3.amazonaws.com"
-      elsif SiteSetting.Upload.s3_region == 'cn-north-1'
-        "//#{bucket}.s3.cn-north-1.amazonaws.com.cn"
+      if SiteSetting.s3_endpoint == "https://s3.amazonaws.com"
+        if SiteSetting.Upload.s3_region.start_with?("cn-")
+          "//#{bucket}.s3.#{SiteSetting.Upload.s3_region}.amazonaws.com.cn"
+        else
+          "//#{bucket}.s3.dualstack.#{SiteSetting.Upload.s3_region}.amazonaws.com"
+        end
+      elsif SiteSetting.s3_force_path_style
+        "//#{url_basename}/#{bucket}"
       else
-        "//#{bucket}.s3-#{SiteSetting.Upload.s3_region}.amazonaws.com"
+        "//#{bucket}.#{url_basename}"
       end
     end
   end
 
   def self.Upload
     SiteSetting::Upload
+  end
+
+  %i{
+    site_logo_url
+    site_logo_small_url
+    site_mobile_logo_url
+    site_favicon_url
+    site_home_logo_url
+  }.each { |client_setting| client_settings << client_setting }
+
+  def self.site_home_logo_url
+    upload = SiteSetting.logo
+
+    if SiteSetting.defaults.get(:title) != SiteSetting.title && !upload
+      ''
+    else
+      full_cdn_url(upload ? upload.url : '/images/d-logo-sketch.png')
+    end
+  end
+
+  def self.site_logo_url
+    upload = self.logo
+    upload ? full_cdn_url(upload.url) : self.logo_url(warn: false)
+  end
+
+  def self.site_logo_small_url
+    upload = self.logo_small
+    upload ? full_cdn_url(upload.url) : self.logo_small_url(warn: false)
+  end
+
+  def self.site_digest_logo_url
+    upload = self.digest_logo
+    upload ? full_cdn_url(upload.url) : self.digest_logo_url(warn: false)
+  end
+
+  def self.site_mobile_logo_url
+    upload = self.mobile_logo
+    upload ? full_cdn_url(upload.url) : self.mobile_logo_url(warn: false)
+  end
+
+  def self.site_large_icon_url
+    upload = self.large_icon
+    upload ? full_cdn_url(upload.url) : self.large_icon_url(warn: false)
+  end
+
+  def self.site_favicon_url
+    upload = self.favicon
+    upload ? full_cdn_url(upload.url) : self.favicon_url(warn: false)
+  end
+
+  def self.site_apple_touch_icon_url
+    upload = self.apple_touch_icon
+    upload ? full_cdn_url(upload.url) : self.apple_touch_icon_url(warn: false)
+  end
+
+  def self.opengraph_image_url
+    upload = self.opengraph_image
+    upload ? full_cdn_url(upload.url) : self.default_opengraph_image_url(warn: false)
+  end
+
+  def self.site_twitter_summary_large_image_url
+    self.twitter_summary_large_image&.url ||
+      self.twitter_summary_large_image_url(warn: false)
+  end
+
+  def self.site_push_notifications_icon_url
+    SiteSetting.push_notifications_icon&.url ||
+      SiteSetting.push_notifications_icon_url(warn: false)
+  end
+
+  def self.shared_drafts_enabled?
+    c = SiteSetting.shared_drafts_category
+    c.present? && c.to_i != SiteSetting.uncategorized_category_id.to_i
   end
 
 end

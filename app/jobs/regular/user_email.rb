@@ -5,10 +5,23 @@ module Jobs
 
   # Asynchronously send an email to a user
   class UserEmail < Jobs::Base
+    include Skippable
+
+    sidekiq_options queue: 'low'
+
+    # Can be overridden by subclass, for example critical email
+    # should always consider being sent
+    def quit_email_early?
+      SiteSetting.disable_emails == 'yes'
+    end
 
     def execute(args)
       raise Discourse::InvalidParameters.new(:user_id) unless args[:user_id].present?
       raise Discourse::InvalidParameters.new(:type)    unless args[:type].present?
+
+      # This is for performance. Quit out fast without doing a bunch
+      # of extra work when emails are disabled.
+      return if quit_email_early?
 
       post = nil
       notification = nil
@@ -18,18 +31,21 @@ module Jobs
 
       set_skip_context(type, args[:user_id], to_address, args[:post_id])
 
-      return skip(I18n.t("email_log.no_user", user_id: args[:user_id])) unless user
+      return skip(SkippedEmailLog.reason_types[:user_email_no_user]) unless user
 
       if args[:post_id].present?
         post = Post.find_by(id: args[:post_id])
-        return skip(I18n.t('email_log.post_not_found', post_id: args[:post_id])) unless post.present?
+
+        unless post.present?
+          return skip(SkippedEmailLog.reason_types[:user_email_post_not_found])
+        end
       end
 
       if args[:notification_id].present?
         notification = Notification.find_by(id: args[:notification_id])
       end
 
-      message, skip_reason = message_for_email(
+      message, skip_reason_type = message_for_email(
         user,
         post,
         type,
@@ -39,8 +55,14 @@ module Jobs
 
       if message
         Email::Sender.new(message, type, user).send
+        if (b = user.user_stat.bounce_score) > SiteSetting.bounce_score_erode_on_send
+          # erode bounce score each time we send an email
+          # this means that we are punished a lot less for bounces
+          # and we can recover more quickly
+          user.user_stat.update(bounce_score: b - SiteSetting.bounce_score_erode_on_send)
+        end
       else
-        skip_reason
+        skip_reason_type
       end
     end
 
@@ -66,10 +88,12 @@ module Jobs
 
       set_skip_context(type, user.id, to_address || user.email, post.try(:id))
 
-      return skip_message(I18n.t("email_log.anonymous_user"))   if user.anonymous?
+      if user.anonymous?
+        return skip_message(SkippedEmailLog.reason_types[:user_email_anonymous_user])
+      end
 
       if user.suspended? && !["user_private_message", "account_suspended"].include?(type.to_s)
-        return skip_message(I18n.t("email_log.suspended_not_pm"))
+        return skip_message(SkippedEmailLog.reason_types[:user_email_user_suspended_not_pm])
       end
 
       return if user.staged && type.to_s == "digest"
@@ -79,8 +103,10 @@ module Jobs
 
       email_args = {}
 
-      if post || notification || notification_type
-        return skip_message(I18n.t('email_log.seen_recently')) if seen_recently && !user.suspended?
+      if (post || notification || notification_type) &&
+         (seen_recently && !user.suspended?)
+
+        return skip_message(SkippedEmailLog.reason_types[:user_email_seen_recently])
       end
 
       email_args[:post] = post if post
@@ -106,13 +132,13 @@ module Jobs
 
         unless user.user_option.email_always?
           if (notification && notification.read?) || (post && post.seen?(user))
-            return skip_message(I18n.t('email_log.notification_already_read'))
+            return skip_message(SkippedEmailLog.reason_types[:user_email_notification_already_read])
           end
         end
       end
 
-      skip_reason = skip_email_for_post(post, user)
-      return skip_message(skip_reason) if skip_reason.present?
+      skip_reason_type = skip_email_for_post(post, user)
+      return skip_message(skip_reason_type) if skip_reason_type.present?
 
       # Make sure that mailer exists
       raise Discourse::InvalidParameters.new("type=#{type}") unless UserNotifications.respond_to?(type)
@@ -120,12 +146,17 @@ module Jobs
       email_args[:email_token] = email_token if email_token.present?
       email_args[:new_email] = user.email if type.to_s == "notify_old_email"
 
+      if args[:client_ip] && args[:user_agent]
+        email_args[:client_ip] = args[:client_ip]
+        email_args[:user_agent] = args[:user_agent]
+      end
+
       if EmailLog.reached_max_emails?(user, type.to_s)
-        return skip_message(I18n.t('email_log.exceeded_emails_limit'))
+        return skip_message(SkippedEmailLog.reason_types[:exceeded_emails_limit])
       end
 
       if !EmailLog::CRITICAL_EMAIL_TYPES.include?(type.to_s) && user.user_stat.bounce_score >= SiteSetting.bounce_score_threshold
-        return skip_message(I18n.t('email_log.exceeded_bounces_limit'))
+        return skip_message(SkippedEmailLog.reason_types[:exceeded_bounces_limit])
       end
 
       if args[:user_history_id]
@@ -167,26 +198,38 @@ module Jobs
     # If this email has a related post, don't send an email if it's been deleted or seen recently.
     def skip_email_for_post(post, user)
       if post
-        return I18n.t('email_log.topic_nil')          if post.topic.blank?
-        return I18n.t('email_log.post_user_deleted')  if post.user.blank?
-        return I18n.t('email_log.post_deleted')       if post.user_deleted?
-        return I18n.t('email_log.user_suspended')     if user.suspended? && !post.user&.staff?
+        if post.topic.blank?
+          return SkippedEmailLog.reason_types[:user_email_topic_nil]
+        end
+
+        if post.user.blank?
+          return SkippedEmailLog.reason_types[:user_email_post_user_deleted]
+        end
+
+        if post.user_deleted?
+          return SkippedEmailLog.reason_types[:user_email_post_deleted]
+        end
+
+        if user.suspended? && !post.user&.staff?
+          return SkippedEmailLog.reason_types[:user_email_user_suspended]
+        end
 
         already_read = !user.user_option.email_always? && PostTiming.exists?(topic_id: post.topic_id, post_number: post.post_number, user_id: user.id)
-        return I18n.t('email_log.already_read') if already_read
+        if already_read
+          return SkippedEmailLog.reason_types[:user_email_already_read]
+        end
       else
         false
       end
     end
 
-    def skip(reason)
-      EmailLog.create!(
+    def skip(reason_type)
+      create_skipped_email_log(
         email_type: @skip_context[:type],
         to_address: @skip_context[:to_address],
         user_id: @skip_context[:user_id],
         post_id: @skip_context[:post_id],
-        skipped: true,
-        skipped_reason: "[UserEmail] #{reason}",
+        reason_type: reason_type
       )
     end
 

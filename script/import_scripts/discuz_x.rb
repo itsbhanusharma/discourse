@@ -273,7 +273,7 @@ class ImportScripts::DiscuzX < ImportScripts::Base
         description: row['description'],
         position: row['position'].to_i + max_position,
         color: color,
-        suppress_from_homepage: (row['status'] == (0) || row['status'] == (3)),
+        suppress_from_latest: (row['status'] == (0) || row['status'] == (3)),
         post_create_action: lambda do |category|
           if slug = @category_slug[row['id']]
             category.update(slug: slug)
@@ -287,7 +287,7 @@ class ImportScripts::DiscuzX < ImportScripts::Base
           if !row['icon'].empty?
             upload = create_upload(Discourse::SYSTEM_USER_ID, File.join(DISCUZX_BASE_DIR, ATTACHMENT_DIR, '../common', row['icon']), File.basename(row['icon']))
             if upload
-              category.logo_url = upload.url
+              category.uploaded_logo = upload
               # FIXME: I don't know how to get '/shared' by script. May change to Rails.root
               category.color = Miro::DominantColors.new(File.join('/shared', category.logo_url)).to_hex.first[1, 6] if !color
               category.save!
@@ -393,12 +393,12 @@ class ImportScripts::DiscuzX < ImportScripts::Base
         end
 
         if m['status'] & 1 == 1 || mapped[:raw].blank?
-          mapped[:post_create_action] = lambda do |post|
-            PostDestroyer.new(Discourse.system_user, post).perform_delete
+          mapped[:post_create_action] = lambda do |action_post|
+            PostDestroyer.new(Discourse.system_user, action_post).perform_delete
           end
         elsif (m['status'] & 2) >> 1 == 1 # waiting for approve
-          mapped[:post_create_action] = lambda do |post|
-            PostAction.act(Discourse.system_user, post, 6, take_action: false)
+          mapped[:post_create_action] = lambda do |action_post|
+            PostAction.act(Discourse.system_user, action_post, 6, take_action: false)
           end
         end
         skip ? nil : mapped

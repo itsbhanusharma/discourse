@@ -4,63 +4,70 @@ acceptance("Admin - Suspend User", {
   loggedIn: true,
 
   pretend(server, helper) {
-    server.put('/admin/users/:user_id/suspend', () => helper.response(200, {
-      suspension: {
-        suspended: true
-      }
-    }));
+    server.put("/admin/users/:user_id/suspend", () =>
+      helper.response(200, {
+        suspension: {
+          suspended: true
+        }
+      })
+    );
 
-    server.put('/admin/users/:user_id/unsuspend', () => helper.response(200, {
-      suspension: {
-        suspended: false
-      }
-    }));
+    server.put("/admin/users/:user_id/unsuspend", () =>
+      helper.response(200, {
+        suspension: {
+          suspended: false
+        }
+      })
+    );
   }
 });
 
-QUnit.test("suspend a user - cancel", assert => {
-  visit("/admin/users/1234/regular");
-  click(".suspend-user");
+QUnit.test("suspend a user - cancel", async assert => {
+  await visit("/admin/users/1234/regular");
+  await click(".suspend-user");
 
-  andThen(() => {
-    assert.equal(find('.suspend-user-modal:visible').length, 1);
-  });
+  assert.equal(find(".suspend-user-modal:visible").length, 1);
 
-  click('.d-modal-cancel');
-  andThen(() => {
-    assert.equal(find('.suspend-user-modal:visible').length, 0);
-  });
+  await click(".d-modal-cancel");
+
+  assert.equal(find(".suspend-user-modal:visible").length, 0);
 });
 
-QUnit.test("suspend, then unsuspend a user", assert => {
-  visit("/admin/users/1234/regular");
+QUnit.test("suspend, then unsuspend a user", async assert => {
+  const suspendUntilCombobox = selectKit(".suspend-until .combobox");
 
-  andThen(() => {
-    assert.ok(!exists('.suspension-info'));
-  });
+  await visit("/admin/flags/active");
 
-  click(".suspend-user");
+  await visit("/admin/users/1234/regular");
 
-  andThen(() => {
-    assert.equal(find('.perform-suspend[disabled]').length, 1, 'disabled by default');
+  assert.ok(!exists(".suspension-info"));
 
-    expandSelectKit('.suspend-until .combobox');
-    selectKitSelectRow('tomorrow', { selector: '.suspend-until .combobox'});
-  });
+  await click(".suspend-user");
 
-  fillIn('.suspend-reason', "for breaking the rules");
-  fillIn('.suspend-message', "this is an email reason why");
-  andThen(() => {
-    assert.equal(find('.perform-suspend[disabled]').length, 0, 'no longer disabled');
-  });
-  click('.perform-suspend');
-  andThen(() => {
-    assert.equal(find('.suspend-user-modal:visible').length, 0);
-    assert.ok(exists('.suspension-info'));
-  });
+  assert.equal(
+    find(".perform-suspend[disabled]").length,
+    1,
+    "disabled by default"
+  );
 
-  click('.unsuspend-user');
-  andThen(() => {
-    assert.ok(!exists('.suspension-info'));
-  });
+  await suspendUntilCombobox.expand();
+  await suspendUntilCombobox.selectRowByValue("tomorrow");
+
+  await fillIn(".suspend-reason", "for breaking the rules");
+  await fillIn(".suspend-message", "this is an email reason why");
+
+  assert.equal(
+    find(".perform-suspend[disabled]").length,
+    0,
+    "no longer disabled"
+  );
+
+  await click(".perform-suspend");
+
+  assert.equal(find(".suspend-user-modal:visible").length, 0);
+  assert.ok(exists(".suspension-info"));
+
+  await click(".unsuspend-user");
+
+  assert.ok(!exists(".suspension-info"));
 });

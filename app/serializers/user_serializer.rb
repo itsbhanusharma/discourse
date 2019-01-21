@@ -72,13 +72,16 @@ class UserSerializer < BasicUserSerializer
              :primary_group_flair_url,
              :primary_group_flair_bg_color,
              :primary_group_flair_color,
-             :staged
+             :staged,
+             :second_factor_enabled,
+             :second_factor_backup_enabled,
+             :second_factor_remaining_backup_codes,
+             :associated_accounts
 
   has_one :invited_by, embed: :object, serializer: BasicUserSerializer
   has_many :groups, embed: :object, serializer: BasicGroupSerializer
   has_many :group_users, embed: :object, serializer: BasicGroupUserSerializer
   has_many :featured_user_badges, embed: :ids, serializer: UserBadgeSerializer, root: :user_badges
-  has_one  :card_badge, embed: :object, serializer: BadgeSerializer
   has_one :user_option, embed: :object, serializer: UserOptionSerializer
 
   def include_user_option?
@@ -106,12 +109,12 @@ class UserSerializer < BasicUserSerializer
                      :custom_avatar_upload_id,
                      :custom_avatar_template,
                      :has_title_badges,
-                     :card_image_badge,
-                     :card_image_badge_id,
                      :muted_usernames,
                      :mailing_list_posts_per_day,
                      :can_change_bio,
-                     :user_api_keys
+                     :user_api_keys,
+                     :user_auth_tokens,
+                     :user_auth_token_logs
 
   untrusted_attributes :bio_raw,
                        :bio_cooked,
@@ -145,6 +148,34 @@ class UserSerializer < BasicUserSerializer
       (scope.is_staff? && object.staged?)
   end
 
+  def include_associated_accounts?
+    (object.id && object.id == scope.user.try(:id))
+  end
+
+  def include_second_factor_enabled?
+    (object&.id == scope.user&.id) || scope.is_staff?
+  end
+
+  def second_factor_enabled
+    object.totp_enabled?
+  end
+
+  def include_second_factor_backup_enabled?
+    object&.id == scope.user&.id
+  end
+
+  def second_factor_backup_enabled
+    object.backup_codes_enabled?
+  end
+
+  def include_second_factor_remaining_backup_codes?
+    (object&.id == scope.user&.id) && object.backup_codes_enabled?
+  end
+
+  def second_factor_remaining_backup_codes
+    object.remaining_backup_codes
+  end
+
   def can_change_bio
     !(SiteSetting.enable_sso && SiteSetting.sso_overrides_bio)
   end
@@ -155,15 +186,30 @@ class UserSerializer < BasicUserSerializer
         id: k.id,
         application_name: k.application_name,
         scopes: k.scopes.map { |s| I18n.t("user_api_key.scopes.#{s}") },
-        created_at: k.created_at
+        created_at: k.created_at,
+        last_used_at: k.last_used_at,
       }
     end
 
+    keys.sort! { |a, b| a[:last_used_at].to_time <=> b[:last_used_at].to_time }
     keys.length > 0 ? keys : nil
   end
 
-  def card_badge
-    object.user_profile.card_image_badge
+  def user_auth_tokens
+    ActiveModel::ArraySerializer.new(
+      object.user_auth_tokens,
+      each_serializer: UserAuthTokenSerializer,
+      scope: scope
+    )
+  end
+
+  def user_auth_token_logs
+    ActiveModel::ArraySerializer.new(
+      object.user_auth_token_logs.where(
+        action: UserAuthToken::USER_ACTIONS
+      ).order(:created_at).reverse_order,
+      each_serializer: UserAuthTokenLogSerializer
+    )
   end
 
   def bio_raw
@@ -179,29 +225,17 @@ class UserSerializer < BasicUserSerializer
   end
 
   def website_name
-    uri = URI(website.to_s) rescue nil
+    uri = begin
+      URI(website.to_s)
+    rescue URI::Error
+    end
+
     return if uri.nil? || uri.host.nil?
     uri.host.sub(/^www\./, '') + uri.path
   end
 
   def include_website_name
     website.present?
-  end
-
-  def card_image_badge_id
-    object.user_profile.card_image_badge.try(:id)
-  end
-
-  def include_card_image_badge_id?
-    card_image_badge_id.present?
-  end
-
-  def card_image_badge
-    object.user_profile.card_image_badge.try(:image)
-  end
-
-  def include_card_image_badge?
-    card_image_badge.present?
   end
 
   def profile_background
@@ -349,22 +383,36 @@ class UserSerializer < BasicUserSerializer
     User.system_avatar_template(object.username)
   end
 
+  def include_gravatar_avatar_upload_id?
+    object.user_avatar&.gravatar_upload_id
+  end
+
   def gravatar_avatar_upload_id
-    object.user_avatar.try(:gravatar_upload_id)
+    object.user_avatar.gravatar_upload_id
+  end
+
+  def include_gravatar_avatar_template?
+    include_gravatar_avatar_upload_id?
   end
 
   def gravatar_avatar_template
-    return unless gravatar_upload_id = object.user_avatar.try(:gravatar_upload_id)
-    User.avatar_template(object.username, gravatar_upload_id)
+    User.avatar_template(object.username, object.user_avatar.gravatar_upload_id)
+  end
+
+  def include_custom_avatar_upload_id?
+    object.user_avatar&.custom_upload_id
   end
 
   def custom_avatar_upload_id
-    object.user_avatar.try(:custom_upload_id)
+    object.user_avatar.custom_upload_id
+  end
+
+  def include_custom_avatar_template?
+    include_custom_avatar_upload_id?
   end
 
   def custom_avatar_template
-    return unless custom_upload_id = object.user_avatar.try(:custom_upload_id)
-    User.avatar_template(object.username, custom_upload_id)
+    User.avatar_template(object.username, object.user_avatar.custom_upload_id)
   end
 
   def has_title_badges
@@ -372,7 +420,8 @@ class UserSerializer < BasicUserSerializer
   end
 
   def user_fields
-    object.user_fields
+    allowed_keys = scope.allowed_user_field_ids(object).map(&:to_s)
+    object.user_fields&.select { |k, v| allowed_keys.include?(k) }
   end
 
   def include_user_fields?

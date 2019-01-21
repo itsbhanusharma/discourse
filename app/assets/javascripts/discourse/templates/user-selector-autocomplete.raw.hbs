@@ -1,10 +1,10 @@
-<div class='autocomplete'>
+<div class='autocomplete ac-user'>
   <ul>
     {{#each options.users as |user|}}
       <li>
         <a href title="{{user.name}}">
           {{avatar user imageSize="tiny"}}
-          <span class='username'>{{user.username}}</span>
+          <span class='username'>{{format-username user.username}}</span>
           <span class='name'>{{user.name}}</span>
         </a>
       </li>
@@ -14,8 +14,8 @@
       {{#each options.emails as |email|}}
         <li>
           <a href title="{{email.username}}">
-            <i class='fa fa-envelope'></i>
-            <span class='username'>{{email.username}}</span>
+            {{d-icon 'envelope'}}
+            <span class='username'>{{format-username email.username}}</span>
           </a>
         </li>
       {{/each}}

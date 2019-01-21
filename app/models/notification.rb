@@ -13,16 +13,22 @@ class Notification < ActiveRecord::Base
   scope :visible , lambda { joins('LEFT JOIN topics ON notifications.topic_id = topics.id')
     .where('topics.id IS NULL OR topics.deleted_at IS NULL') }
 
+  scope :filter_by_display_username_and_type, ->(username, notification_type) {
+    where("data::json ->> 'display_username' = ?", username)
+      .where(notification_type: notification_type)
+      .order(created_at: :desc)
+  }
+
   attr_accessor :skip_send_email
 
   after_commit :send_email, on: :create
   after_commit :refresh_notification_count, on: [:create, :update, :destroy]
 
   def self.ensure_consistency!
-    Notification.exec_sql <<-SQL
+    DB.exec(<<~SQL, Notification.types[:private_message])
       DELETE
         FROM notifications n
-       WHERE notification_type = #{Notification.types[:private_message]}
+       WHERE notification_type = ?
          AND NOT EXISTS (
             SELECT 1
               FROM posts p
@@ -53,32 +59,30 @@ class Notification < ActiveRecord::Base
                         group_mentioned: 15,
                         group_message_summary: 16,
                         watching_first_post: 17,
-                        topic_reminder: 18
+                        topic_reminder: 18,
+                        liked_consolidated: 19,
                        )
   end
 
   def self.mark_posts_read(user, topic_id, post_numbers)
-    count = Notification
-      .where(user_id: user.id,
-             topic_id: topic_id,
-             post_number: post_numbers,
-             read: false)
-      .update_all("read = 't'")
-
-    if count > 0
-      user.publish_notifications_state
-    end
-
-    count
+    Notification
+      .where(
+        user_id: user.id,
+        topic_id: topic_id,
+        post_number: post_numbers,
+        read: false
+      )
+      .update_all(read: true)
   end
 
   def self.read(user, notification_ids)
-    count = Notification.where(user_id: user.id)
-      .where(id: notification_ids)
-      .where(read: false)
+    Notification
+      .where(
+        id: notification_ids,
+        user_id: user.id,
+        read: false
+      )
       .update_all(read: true)
-
-    user.publish_notifications_state if count > 0
   end
 
   def self.interesting_after(min_date)
@@ -148,24 +152,29 @@ class Notification < ActiveRecord::Base
       .includes(:topic)
 
     if user.user_option.like_notification_frequency == UserOption.like_notification_frequency_type[:never]
-      notifications = notifications.where('notification_type <> ?', Notification.types[:liked])
+      [
+        Notification.types[:liked],
+        Notification.types[:liked_consolidated]
+      ].each do |notification_type|
+        notifications = notifications.where(
+          'notification_type <> ?', notification_type
+        )
+      end
     end
 
     notifications = notifications.to_a
 
     if notifications.present?
 
-      ids = Notification.exec_sql("
+      ids = DB.query_single(<<~SQL, count.to_i)
          SELECT n.id FROM notifications n
          WHERE
            n.notification_type = 6 AND
            n.user_id = #{user.id.to_i} AND
            NOT read
         ORDER BY n.id ASC
-        LIMIT #{count.to_i}
-      ").values.map do |x, _|
-        x.to_i
-      end
+        LIMIT ?
+      SQL
 
       if ids.length > 0
         notifications += user
@@ -202,7 +211,11 @@ class Notification < ActiveRecord::Base
   protected
 
   def refresh_notification_count
-    user.publish_notifications_state
+    begin
+      user.reload.publish_notifications_state
+    rescue ActiveRecord::RecordNotFound
+      # happens when we delete a user
+    end
   end
 
   def send_email
@@ -228,9 +241,9 @@ end
 #
 # Indexes
 #
-#  idx_notifications_speedup_unread_count                       (user_id,notification_type)
+#  idx_notifications_speedup_unread_count                       (user_id,notification_type) WHERE (NOT read)
 #  index_notifications_on_post_action_id                        (post_action_id)
 #  index_notifications_on_user_id_and_created_at                (user_id,created_at)
-#  index_notifications_on_user_id_and_id                        (user_id,id) UNIQUE
+#  index_notifications_on_user_id_and_id                        (user_id,id) UNIQUE WHERE ((notification_type = 6) AND (NOT read))
 #  index_notifications_on_user_id_and_topic_id_and_post_number  (user_id,topic_id,post_number)
 #

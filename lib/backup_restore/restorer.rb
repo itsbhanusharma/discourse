@@ -8,6 +8,22 @@ module BackupRestore
   class Restorer
     attr_reader :success
 
+    def self.pg_produces_portable_dump?(version)
+      version = Gem::Version.new(version)
+
+      %w{
+        10.3
+        9.6.8
+        9.5.12
+        9.4.17
+        9.3.22
+      }.each do |unportable_version|
+        return false if Gem::Dependency.new("", "~> #{unportable_version}").match?("", version)
+      end
+
+      true
+    end
+
     def initialize(user_id, opts = {})
       @user_id = user_id
       @client_id = opts[:client_id]
@@ -39,23 +55,30 @@ module BackupRestore
       validate_metadata
 
       extract_dump
-      restore_dump
 
-      ### READ-ONLY / START ###
-      enable_readonly_mode
-
-      pause_sidekiq
-      wait_for_sidekiq
-
-      switch_schema!
+      if !can_restore_into_different_schema?
+        log "Cannot restore into different schema, restoring in-place"
+        enable_readonly_mode
+        pause_sidekiq
+        wait_for_sidekiq
+        BackupRestore.move_tables_between_schemas("public", "backup")
+        @db_was_changed = true
+        restore_dump
+      else
+        log "Restoring into 'backup' schema"
+        restore_dump
+        enable_readonly_mode
+        pause_sidekiq
+        wait_for_sidekiq
+        switch_schema!
+      end
 
       migrate_database
       reconnect_database
       reload_site_settings
       clear_emoji_cache
-
       disable_readonly_mode
-      ### READ-ONLY / END ###
+      clear_theme_cache
 
       extract_uploads
     rescue SystemExit
@@ -68,12 +91,9 @@ module BackupRestore
     else
       @success = true
     ensure
-      begin
-        notify_user
-        clean_up
-      rescue => ex
-        Rails.logger.error("#{ex}\n" + ex.backtrace.join("\n"))
-      end
+      clean_up
+      notify_user
+      log "Finished!"
 
       @success ? log("[SUCCESS]") : log("[FAILED]")
     end
@@ -101,12 +121,12 @@ module BackupRestore
 
     def initialize_state
       @success = false
+      @store = BackupRestore::BackupStore.create
       @db_was_changed = false
       @current_db = RailsMultisite::ConnectionManagement.current_db
       @current_version = BackupRestore.current_version
       @timestamp = Time.now.strftime("%Y-%m-%d-%H%M%S")
       @tmp_directory = File.join(Rails.root, "tmp", "restores", @current_db, @timestamp)
-      @source_filename = File.join(Backup.base_directory, @filename)
       @archive_filename = File.join(@tmp_directory, @filename)
       @tar_filename = @archive_filename[0...-3]
       @meta_filename = File.join(@tmp_directory, BackupRestore::METADATA_FILE)
@@ -163,8 +183,15 @@ module BackupRestore
     end
 
     def copy_archive_to_tmp_directory
-      log "Copying archive to tmp directory..."
-      Discourse::Utils.execute_command('cp', @source_filename, @archive_filename, failure_message: "Failed to copy archive to tmp directory.")
+      if @store.remote?
+        log "Downloading archive to tmp directory..."
+        failure_message = "Failed to download archive to tmp directory."
+      else
+        log "Copying archive to tmp directory..."
+        failure_message = "Failed to copy archive to tmp directory."
+      end
+
+      @store.download_file(@filename, @archive_filename, failure_message)
     end
 
     def unzip_archive
@@ -178,10 +205,9 @@ module BackupRestore
     end
 
     def extract_metadata
-      log "Extracting metadata file..."
-
       @metadata =
         if system('tar', '--list', '--file', @tar_filename, BackupRestore::METADATA_FILE)
+          log "Extracting metadata file..."
           FileUtils.cd(@tmp_directory) do
             Discourse::Utils.execute_command(
               'tar', '--extract', '--file', @tar_filename, BackupRestore::METADATA_FILE,
@@ -193,6 +219,7 @@ module BackupRestore
           raise "Failed to load metadata file." if !data
           data
         else
+          log "No metadata file to extract."
           if @filename =~ /-#{BackupRestore::VERSION_PREFIX}(\d{14})/
             { "version" => Regexp.last_match[1].to_i }
           else
@@ -236,6 +263,20 @@ module BackupRestore
           failure_message: "Failed to extract dump file."
         )
       end
+    end
+
+    def get_dumped_by_version
+      output = Discourse::Utils.execute_command(
+        File.extname(@dump_filename) == '.gz' ? 'zgrep' : 'grep',
+        '-m1', @dump_filename, '-e', "-- Dumped by pg_dump version",
+        failure_message: "Failed to check version of pg_dump used to generate the dump file"
+      )
+
+      output.match(/version (\d+(\.\d+)+)/)[1]
+    end
+
+    def can_restore_into_different_schema?
+      self.class.pg_produces_portable_dump?(get_dumped_by_version)
     end
 
     def restore_dump_command
@@ -282,7 +323,7 @@ module BackupRestore
     def psql_command
       db_conf = BackupRestore.database_configuration
 
-      password_argument = "PGPASSWORD=#{db_conf.password}" if db_conf.password.present?
+      password_argument = "PGPASSWORD='#{db_conf.password}'" if db_conf.password.present?
       host_argument     = "--host=#{db_conf.host}"         if db_conf.host.present?
       port_argument     = "--port=#{db_conf.port}"         if db_conf.port.present?
       username_argument = "--username=#{db_conf.username}" if db_conf.username.present?
@@ -331,14 +372,14 @@ module BackupRestore
 
       @db_was_changed = true
 
-      User.exec_sql(sql)
+      DB.exec(sql)
     end
 
     def migrate_database
       log "Migrating the database..."
       Discourse::Application.load_tasks
       ENV["VERSION"] = @current_version.to_s
-      User.exec_sql("SET search_path = public, pg_catalog;")
+      DB.exec("SET search_path = public, pg_catalog;")
       Rake::Task["db:migrate"].invoke
     end
 
@@ -410,6 +451,8 @@ module BackupRestore
       else
         log "Could not send notification to '#{@user_info[:username]}' (#{@user_info[:email]}), because the user does not exists..."
       end
+    rescue => ex
+      log "Something went wrong while notifying user.", ex
     end
 
     def clean_up
@@ -418,32 +461,41 @@ module BackupRestore
       unpause_sidekiq
       disable_readonly_mode if Discourse.readonly_mode?
       mark_restore_as_not_running
-      log "Finished!"
     end
 
     def remove_tmp_directory
       log "Removing tmp '#{@tmp_directory}' directory..."
       FileUtils.rm_rf(@tmp_directory) if Dir[@tmp_directory].present?
-    rescue
-      log "Something went wrong while removing the following tmp directory: #{@tmp_directory}"
+    rescue => ex
+      log "Something went wrong while removing the following tmp directory: #{@tmp_directory}", ex
     end
 
     def unpause_sidekiq
       log "Unpausing sidekiq..."
       Sidekiq.unpause!
-    rescue
-      log "Something went wrong while unpausing Sidekiq."
+    rescue => ex
+      log "Something went wrong while unpausing Sidekiq.", ex
+    end
+
+    def clear_theme_cache
+      log "Clear theme cache"
+      ThemeField.force_recompilation!
+      Theme.expire_site_cache!
     end
 
     def disable_readonly_mode
       return if @readonly_mode_was_enabled
       log "Disabling readonly mode..."
       Discourse.disable_readonly_mode
+    rescue => ex
+      log "Something went wrong while disabling readonly mode.", ex
     end
 
     def mark_restore_as_not_running
       log "Marking restore as finished..."
       BackupRestore.mark_as_not_running!
+    rescue => ex
+      log "Something went wrong while marking restore as finished.", ex
     end
 
     def ensure_directory_exists(directory)
@@ -451,11 +503,12 @@ module BackupRestore
       FileUtils.mkdir_p(directory)
     end
 
-    def log(message)
+    def log(message, ex = nil)
       timestamp = Time.now.strftime("%Y-%m-%d %H:%M:%S")
-      puts(message) rescue nil
-      publish_log(message, timestamp) rescue nil
+      puts(message)
+      publish_log(message, timestamp)
       save_log(message, timestamp)
+      Rails.logger.error("#{ex}\n" + ex.backtrace.join("\n")) if ex
     end
 
     def publish_log(message, timestamp)

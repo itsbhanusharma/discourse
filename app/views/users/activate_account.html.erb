@@ -13,30 +13,7 @@
   <%= preload_script "ember_jquery" %>
   <%= preload_script "vendor" %>
   <%= render_google_universal_analytics_code %>
+  <%= tag.meta id: 'data-activate-account', data: { path: path('/u/hp') } %>
 <%- end %>
 
-<script language="javascript">
-  (function() {
-    function activateAccount() {
-      $('#activate-account-button').prop('disabled', true);
-      $.ajax("<%= path "/u/hp" %>").then(function(hp) {
-        $('#password_confirmation').val(hp.value);
-        $('#challenge').val(hp.challenge.split("").reverse().join(""));
-        $('#activate-account-form').submit();
-      }).fail(function() {
-        $('#activate-account-button').prop('disabled', false);
-      });
-    }
-
-    var t0 = new Date().getTime();
-    $('#activate-account-button').on('click', function() {
-      var diff = new Date().getTime() - t0;
-
-      // Ensure the form has been visible for a few ms before allowing the
-      // user to submit.
-      if (diff > 50) {
-        activateAccount();
-      }
-    });
-  })();
-</script>
+<%= preload_script "activate-account" %>

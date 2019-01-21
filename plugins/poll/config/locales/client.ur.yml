@@ -15,8 +15,6 @@ ur:
         one: "کُل ووٹ"
         other: "کُل ووٹ"
       average_rating: "اوسط ریٹینگ: <strong>%{اوسط}</strong>۔"
-      public:
-        title: "ووٹ پبلک ہیں۔"
       multiple:
         help:
           at_least_min_options:
@@ -54,6 +52,8 @@ ur:
         insert: پول شامل کریے
         help:
           options_count: کم از کم 2 آپشنس اینٹر کریں
+          invalid_values: کم از کم قدر زیادہ سے زیادہ قدر سے چھوٹا ہونا ضروری ہے۔
+          min_step_value: کم از کم اضافہ یا کمی کی قدر 1 ہے
         poll_type:
           label: قِسم
           regular: اکیلا انتخاب

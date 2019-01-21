@@ -7,6 +7,10 @@ export default SelectKitRowComponent.extend({
   layoutName: "select-kit/templates/components/category-row",
   classNames: "category-row",
 
+  hideParentCategory: Ember.computed.bool("options.hideParentCategory"),
+  allowUncategorized: Ember.computed.bool("options.allowUncategorized"),
+  categoryLink: Ember.computed.bool("options.categoryLink"),
+
   @computed("options.displayCategoryDescription")
   displayCategoryDescription(displayCategoryDescription) {
     if (Ember.isNone(displayCategoryDescription)) {
@@ -14,6 +18,11 @@ export default SelectKitRowComponent.extend({
     }
 
     return displayCategoryDescription;
+  },
+
+  @computed("descriptionText", "description", "category.name")
+  title(descriptionText, description, name) {
+    return descriptionText || description || name;
   },
 
   @computed("computedContent.value", "computedContent.name")
@@ -28,18 +37,21 @@ export default SelectKitRowComponent.extend({
     }
   },
 
-  @computed("category")
-  badgeForCategory(category) {
+  @computed("category", "parentCategory")
+  badgeForCategory(category, parentCategory) {
     return categoryBadgeHTML(category, {
-      link: false,
-      allowUncategorized: true,
-      hideParent: true
+      link: this.get("categoryLink"),
+      allowUncategorized: this.get("allowUncategorized"),
+      hideParent: parentCategory ? true : false
     }).htmlSafe();
   },
 
   @computed("parentCategory")
   badgeForParentCategory(parentCategory) {
-    return categoryBadgeHTML(parentCategory, {link: false}).htmlSafe();
+    return categoryBadgeHTML(parentCategory, {
+      link: this.get("categoryLink"),
+      allowUncategorized: this.get("allowUncategorized")
+    }).htmlSafe();
   },
 
   @computed("parentCategoryid")
@@ -57,15 +69,37 @@ export default SelectKitRowComponent.extend({
     return category.get("parent_category_id");
   },
 
-  topicCount: Ember.computed.alias("category.topic_count"),
+  @computed(
+    "category.totalTopicCount",
+    "category.topic_count",
+    "options.countSubcategories"
+  )
+  topicCount(totalCount, topicCount, countSubcats) {
+    return `&times; ${countSubcats ? totalCount : topicCount}`.htmlSafe();
+  },
 
   @computed("displayCategoryDescription", "category.description")
   shouldDisplayDescription(displayCategoryDescription, description) {
     return displayCategoryDescription && description && description !== "null";
   },
 
+  @computed("category.description_text")
+  descriptionText(description) {
+    if (description) {
+      return this._formatCategoryDescription(description);
+    }
+  },
+
   @computed("category.description")
   description(description) {
-    return `${description.substr(0, 200)}${description.length > 200 ? '&hellip;' : ''}`;
+    if (description) {
+      return this._formatCategoryDescription(description);
+    }
+  },
+
+  _formatCategoryDescription(description) {
+    return `${description.substr(0, 200)}${
+      description.length > 200 ? "&hellip;" : ""
+    }`;
   }
 });

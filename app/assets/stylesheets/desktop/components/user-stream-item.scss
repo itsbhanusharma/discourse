@@ -1,6 +1,5 @@
 // Desktop styles for "user-stream-item" component
 .user-stream {
-
   // DEPRECATION:
   // The ".item" class should be eventually removed because it's too generic.
   // Once ".item" has been removed, ".user-stream-item" can replace
@@ -8,11 +7,12 @@
   // selectors below are its children
   .item,
   .user-stream-item {
-    padding: 20px 8px 15px 8px;
+    padding: 1em 0.53em;
   }
 
   .time,
-  .delete-info {
+  .delete-info,
+  .draft-type {
     margin-right: 8px;
   }
 

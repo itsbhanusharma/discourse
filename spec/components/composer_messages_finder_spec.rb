@@ -157,6 +157,7 @@ describe ComposerMessagesFinder do
 
       Fabricate(:post, topic: topic, user: user)
       Fabricate(:post, topic: topic, user: user)
+      Fabricate(:post, topic: topic, user: user, post_type: Post.types[:small_action])
 
       SiteSetting.sequential_replies_threshold = 2
     end
@@ -442,7 +443,9 @@ describe ComposerMessagesFinder do
 
         it "notifies if last post is old" do
           topic = Fabricate(:topic, last_posted_at: 181.days.ago)
-          expect(described_class.new(user, composer_action: 'reply', topic_id: topic.id).check_reviving_old_topic).not_to be_blank
+          message = described_class.new(user, composer_action: 'reply', topic_id: topic.id).check_reviving_old_topic
+          expect(message).not_to be_blank
+          expect(message[:body]).to match(/6 months ago/)
         end
       end
 
@@ -461,6 +464,33 @@ describe ComposerMessagesFinder do
           expect(described_class.new(user, composer_action: 'reply', topic_id: topic.id).check_reviving_old_topic).to be_blank
         end
       end
+    end
+  end
+
+  context 'when editing a post' do
+    let(:user) { Fabricate(:user) }
+    let(:topic) { Fabricate(:post).topic }
+
+    let!(:post) do
+      PostCreator.create!(
+        user,
+        topic_id: topic.id,
+        post_number: 1,
+        raw: 'omg my first post'
+      )
+    end
+
+    let(:edit_post_finder) do
+      ComposerMessagesFinder.new(user, composer_action: 'edit')
+    end
+
+    before do
+      SiteSetting.disable_avatar_education_message = true
+      SiteSetting.educate_until_posts = 2
+    end
+
+    it "returns nothing even if it normally would" do
+      expect(edit_post_finder.find).to eq(nil)
     end
   end
 

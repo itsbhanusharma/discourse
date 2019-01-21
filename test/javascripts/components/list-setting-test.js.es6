@@ -1,90 +1,93 @@
-import componentTest from 'helpers/component-test';
+import componentTest from "helpers/component-test";
 
-moduleForComponent('list-setting', {integration: true});
+moduleForComponent("list-setting", { integration: true });
 
-componentTest('default', {
-  template: '{{list-setting settingValue=settingValue choices=choices}}',
+componentTest("default", {
+  template: "{{list-setting settingValue=settingValue choices=choices}}",
 
   beforeEach() {
-    this.set('settingValue', 'bold|italic');
-    this.set('choices', ['bold', 'italic', 'underline']);
+    this.set("settingValue", "bold|italic");
+    this.set("choices", ["bold", "italic", "underline"]);
   },
 
   test(assert) {
-    expandSelectKit();
-
-    andThen(() => {
-      assert.propEqual(selectKit().header.name(), 'bold,italic');
-    });
+    assert.equal(
+      selectKit()
+        .header()
+        .title(),
+      "bold,italic"
+    );
+    assert.equal(
+      selectKit()
+        .header()
+        .value(),
+      "bold,italic"
+    );
   }
 });
 
-componentTest('with emptry string as value', {
-  template: '{{list-setting settingValue=settingValue}}',
+componentTest("with empty string as value", {
+  template: "{{list-setting settingValue=settingValue}}",
 
   beforeEach() {
-    this.set('settingValue', '');
+    this.set("settingValue", "");
   },
 
   test(assert) {
-    expandSelectKit();
-
-    andThen(() => {
-      assert.equal(selectKit().header.el.find(".selected-name").length, 0);
-    });
+    assert.equal(
+      selectKit()
+        .header()
+        .value(),
+      ""
+    );
   }
 });
 
-componentTest('with only setting value', {
-  template: '{{list-setting settingValue=settingValue}}',
+componentTest("with only setting value", {
+  template: "{{list-setting settingValue=settingValue}}",
 
   beforeEach() {
-    this.set('settingValue', 'bold|italic');
+    this.set("settingValue", "bold|italic");
   },
 
   test(assert) {
-    expandSelectKit();
-
-    andThen(() => {
-      assert.propEqual(selectKit().header.name(), 'bold,italic');
-    });
+    assert.equal(
+      selectKit()
+        .header()
+        .value(),
+      "bold,italic"
+    );
   }
 });
 
-componentTest('interactions', {
-  template: '{{list-setting settingValue=settingValue choices=choices}}',
+componentTest("interactions", {
+  template: "{{list-setting settingValue=settingValue choices=choices}}",
 
   beforeEach() {
-    this.set('settingValue', 'bold|italic');
-    this.set('choices', ['bold', 'italic', 'underline']);
+    this.set("settingValue", "bold|italic");
+    this.set("choices", ["bold", "italic", "underline"]);
   },
 
-  test(assert) {
-    expandSelectKit();
+  async test(assert) {
+    const listSetting = selectKit();
 
-    selectKitSelectRow('underline');
+    await listSetting.expand();
+    await listSetting.selectRowByValue("underline");
 
-    andThen(() => {
-      assert.propEqual(selectKit().header.name(), 'bold,italic,underline');
-    });
+    assert.equal(listSetting.header().value(), "bold,italic,underline");
 
-    selectKitFillInFilter('strike');
+    await listSetting.expand();
+    await listSetting.fillInFilter("strike");
 
-    andThen(() => {
-      assert.equal(selectKit().highlightedRow.name(), 'strike');
-    });
+    assert.equal(listSetting.highlightedRow().value(), "strike");
 
-    selectKit().keyboard.enter();
+    await listSetting.keyboard("enter");
 
-    andThen(() => {
-      assert.propEqual(selectKit().header.name(), 'bold,italic,underline,strike');
-    });
+    assert.equal(listSetting.header().value(), "bold,italic,underline,strike");
 
-    selectKit().keyboard.backspace();
-    selectKit().keyboard.backspace();
+    await listSetting.keyboard("backspace");
+    await listSetting.keyboard("backspace");
 
-    andThen(() => {
-      assert.equal(this.get('choices').length, 3, 'it removes the created content from original list');
-    });
+    assert.equal(listSetting.header().value(), "bold,italic,underline");
   }
 });

@@ -1,40 +1,52 @@
-import { buildCategoryPanel } from 'discourse/components/edit-category-panel';
-import { default as computed, observes } from 'ember-addons/ember-computed-decorators';
+import { buildCategoryPanel } from "discourse/components/edit-category-panel";
+import { default as computed } from "ember-addons/ember-computed-decorators";
 
-export default buildCategoryPanel('images').extend({
-  @computed('category.uploaded_background.url')
+export default buildCategoryPanel("images").extend({
+  @computed("category.uploaded_background.url")
   backgroundImageUrl(uploadedBackgroundUrl) {
-    return uploadedBackgroundUrl || '';
+    return uploadedBackgroundUrl || "";
   },
 
-  @computed('category.uploaded_background.id')
-  backgroundImageId(uploadedBackgroundId) {
-    return uploadedBackgroundId || null;
-  },
-
-  @computed('category.uploaded_logo.url')
+  @computed("category.uploaded_logo.url")
   logoImageUrl(uploadedLogoUrl) {
-    return uploadedLogoUrl || '';
+    return uploadedLogoUrl || "";
   },
 
-  @computed('category.uploaded_logo.id')
-  logoImageId(uploadedLogoId) {
-    return uploadedLogoId || null;
+  actions: {
+    logoUploadDone(upload) {
+      this._setFromUpload("category.uploaded_logo", upload);
+    },
+
+    logoUploadDeleted() {
+      this._deleteUpload("category.uploaded_logo");
+    },
+
+    backgroundUploadDone(upload) {
+      this._setFromUpload("category.uploaded_background", upload);
+    },
+
+    backgroundUploadDeleted() {
+      this._deleteUpload("category.uploaded_background");
+    }
   },
 
-  @observes("backgroundImageUrl", "backgroundImageId")
-  _setBackgroundUpload() {
-    this.set("category.uploaded_background", Ember.Object.create({
-      id: this.get('backgroundImageId'),
-      url: this.get('backgroundImageUrl')
-    }));
+  _deleteUpload(path) {
+    this.set(
+      path,
+      Ember.Object.create({
+        id: null,
+        url: null
+      })
+    );
   },
 
-  @observes("logoImageUrl", "logoImageId")
-  _setLogoUpload() {
-    this.set("category.uploaded_logo", Ember.Object.create({
-      id: this.get('logoImageId'),
-      url: this.get('logoImageUrl')
-    }));
+  _setFromUpload(path, upload) {
+    this.set(
+      path,
+      Ember.Object.create({
+        url: upload.url,
+        id: upload.id
+      })
+    );
   }
 });

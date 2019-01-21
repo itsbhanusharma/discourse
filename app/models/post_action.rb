@@ -3,6 +3,7 @@ require_dependency 'system_message'
 
 class PostAction < ActiveRecord::Base
   class AlreadyActed < StandardError; end
+  class FailedToCreatePost < StandardError; end
 
   include RateLimiter::OnCreateRecord
   include Trashable
@@ -51,14 +52,40 @@ class PostAction < ActiveRecord::Base
       .count
   end
 
+  # Forums can choose to apply a minimum number of flags required before it shows up in
+  # the admin interface. One exception is posts hidden by tl3/tl4 - we want those to
+  # show up even if the minimum visibility is not met.
+  def self.apply_minimum_visibility(relation)
+    return relation unless SiteSetting.min_flags_staff_visibility > 1
+
+    params = {
+      min_flags: SiteSetting.min_flags_staff_visibility,
+      hidden_reasons: Post.hidden_reasons.only(:flagged_by_tl3_user, :flagged_by_tl4_user).values
+    }
+
+    relation.having(<<~SQL, params)
+      (COUNT(*) >= :min_flags) OR
+      (SUM(CASE
+        WHEN posts.hidden_reason_id IN (:hidden_reasons) THEN 1
+        ELSE 0
+       END) > 0)
+    SQL
+  end
+
   def self.update_flagged_posts_count
-    posts_flagged_count = PostAction.active
+    flagged_relation = PostAction.active
       .flags
       .joins(post: :topic)
       .where('posts.deleted_at' => nil)
       .where('topics.deleted_at' => nil)
       .where('posts.user_id > 0')
-      .count('DISTINCT posts.id')
+      .group("posts.id")
+
+    flagged_relation = apply_minimum_visibility(flagged_relation)
+
+    posts_flagged_count = flagged_relation
+      .pluck("posts.id")
+      .count
 
     $redis.set('posts_flagged_count', posts_flagged_count)
     user_ids = User.staff.pluck(:id)
@@ -92,18 +119,19 @@ class PostAction < ActiveRecord::Base
     #
     topic_ids = topics.map(&:id)
     map = {}
-        builder = SqlBuilder.new <<SQL
-        SELECT p.topic_id, p.post_number
-        FROM post_actions pa
-        JOIN posts p ON pa.post_id = p.id
-        WHERE p.deleted_at IS NULL AND pa.deleted_at IS NULL AND
-           pa.post_action_type_id = :post_action_type_id AND
-           pa.user_id = :user_id AND
-           p.topic_id IN (:topic_ids)
-        ORDER BY p.topic_id, p.post_number
-SQL
 
-    builder.map_exec(OpenStruct, user_id: user.id, post_action_type_id: post_action_type_id, topic_ids: topic_ids).each do |row|
+    builder = DB.build <<~SQL
+      SELECT p.topic_id, p.post_number
+      FROM post_actions pa
+      JOIN posts p ON pa.post_id = p.id
+      WHERE p.deleted_at IS NULL AND pa.deleted_at IS NULL AND
+         pa.post_action_type_id = :post_action_type_id AND
+         pa.user_id = :user_id AND
+         p.topic_id IN (:topic_ids)
+      ORDER BY p.topic_id, p.post_number
+    SQL
+
+    builder.query(user_id: user.id, post_action_type_id: post_action_type_id, topic_ids: topic_ids).each do |row|
       (map[row.topic_id] ||= []) << row.post_number
     end
 
@@ -132,7 +160,7 @@ SQL
     result = unscoped.where(post_action_type_id: post_action_type)
     result = result.where('post_actions.created_at >= ?', opts[:start_date] || (opts[:since_days_ago] || 30).days.ago)
     result = result.where('post_actions.created_at <= ?', opts[:end_date]) if opts[:end_date]
-    result = result.joins(post: :topic).where('topics.category_id = ?', opts[:category_id]) if opts[:category_id]
+    result = result.joins(post: :topic).merge(Topic.in_category_and_subcategories(opts[:category_id])) if opts[:category_id]
     result.group('date(post_actions.created_at)')
       .order('date(post_actions.created_at)')
       .count
@@ -141,7 +169,7 @@ SQL
   def self.agree_flags!(post, moderator, delete_post = false)
     actions = PostAction.active
       .where(post_id: post.id)
-      .where(post_action_type_id: PostActionType.flag_types.values)
+      .where(post_action_type_id: PostActionType.notify_flag_types.values)
 
     trigger_spam = false
     actions.each do |action|
@@ -153,7 +181,15 @@ SQL
       trigger_spam = true if action.post_action_type_id == PostActionType.types[:spam]
     end
 
+    # Update the flags_agreed user stat
+    UserStat.where(user_id: actions.map(&:user_id)).update_all("flags_agreed = flags_agreed + 1")
+
     DiscourseEvent.trigger(:confirmed_spam_post, post) if trigger_spam
+
+    if actions.first.present?
+      DiscourseEvent.trigger(:flag_reviewed, post)
+      DiscourseEvent.trigger(:flag_agreed, actions.first)
+    end
 
     update_flagged_posts_count
   end
@@ -167,8 +203,7 @@ SQL
         PostActionType.notify_flag_type_ids
       end
 
-    actions = PostAction.where(post_id: post.id)
-      .where(post_action_type_id: action_type_ids)
+    actions = PostAction.active.where(post_id: post.id).where(post_action_type_id: action_type_ids)
 
     actions.each do |action|
       action.disagreed_at = Time.zone.now
@@ -178,6 +213,9 @@ SQL
       action.add_moderator_post_if_needed(moderator, :disagreed)
     end
 
+    # Update the flags_disagreed user stat
+    UserStat.where(user_id: actions.map(&:user_id)).update_all("flags_disagreed = flags_disagreed + 1")
+
     # reset all cached counters
     cached = {}
     action_type_ids.each do |atid|
@@ -186,6 +224,11 @@ SQL
     end
 
     Post.with_deleted.where(id: post.id).update_all(cached)
+
+    if actions.first.present?
+      DiscourseEvent.trigger(:flag_reviewed, post)
+      DiscourseEvent.trigger(:flag_disagreed, actions.first)
+    end
 
     update_flagged_posts_count
   end
@@ -201,6 +244,11 @@ SQL
       # so callback is called
       action.save
       action.add_moderator_post_if_needed(moderator, :deferred, delete_post)
+    end
+
+    if actions.first.present?
+      DiscourseEvent.trigger(:flag_reviewed, post)
+      DiscourseEvent.trigger(:flag_deferred, actions.first)
     end
 
     update_flagged_posts_count
@@ -230,7 +278,7 @@ SQL
     title = I18n.t("post_action_types.#{post_action_type}.email_title", title: post.topic.title, locale: SiteSetting.default_locale)
     body = I18n.t("post_action_types.#{post_action_type}.email_body", message: opts[:message], link: "#{Discourse.base_url}#{post.url}", locale: SiteSetting.default_locale)
     warning = opts[:is_warning] if opts[:is_warning].present?
-    title = title.truncate(255, separator: /\s/)
+    title = title.truncate(SiteSetting.max_topic_title_length, separator: /\s/)
 
     opts = {
       archetype: Archetype.private_message,
@@ -255,7 +303,7 @@ SQL
         end
     end
 
-    PostCreator.new(user, opts).create.try(:id)
+    PostCreator.new(user, opts).create!&.id
   end
 
   def self.limit_action!(user, post, post_action_type_id)
@@ -265,7 +313,12 @@ SQL
   def self.act(user, post, post_action_type_id, opts = {})
     limit_action!(user, post, post_action_type_id)
 
-    related_post_id = create_message_for_post_action(user, post, post_action_type_id, opts)
+    begin
+      related_post_id = create_message_for_post_action(user, post, post_action_type_id, opts)
+    rescue ActiveRecord::RecordNotSaved => e
+      raise FailedToCreatePost.new(e.message)
+    end
+
     staff_took_action = opts[:take_action] || false
 
     targets_topic =
@@ -302,7 +355,12 @@ SQL
         BadgeGranter.queue_badge_grant(Badge::Trigger::PostAction, post_action: post_action)
       end
     end
-    GivenDailyLike.increment_for(user.id)
+
+    if post_action && PostActionType.notify_flag_type_ids.include?(post_action_type_id)
+      DiscourseEvent.trigger(:flag_created, post_action)
+    end
+
+    GivenDailyLike.increment_for(user.id) if post_action_type_id == PostActionType.types[:like]
 
     # agree with other flags
     if staff_took_action
@@ -320,7 +378,7 @@ SQL
   def self.copy(original_post, target_post)
     cols_to_copy = (column_names - %w{id post_id}).join(', ')
 
-    exec_sql <<~SQL
+    DB.exec <<~SQL
     INSERT INTO post_actions(post_id, #{cols_to_copy})
     SELECT #{target_post.id}, #{cols_to_copy}
     FROM post_actions
@@ -339,7 +397,7 @@ SQL
     if action = finder.first
       action.remove_act!(user)
       action.post.unhide! if action.staff_took_action
-      GivenDailyLike.decrement_for(user.id)
+      GivenDailyLike.decrement_for(user.id) if post_action_type_id == PostActionType.types[:like]
     end
   end
 
@@ -360,7 +418,7 @@ SQL
   end
 
   def is_flag?
-    !!PostActionType.flag_types[post_action_type_id]
+    !!PostActionType.notify_flag_types[post_action_type_id]
   end
 
   def is_private_message?
@@ -392,39 +450,42 @@ SQL
   end
 
   before_create do
-    post_action_type_ids = is_flag? ? PostActionType.flag_types_without_custom.values : post_action_type_id
+    post_action_type_ids = is_flag? ? PostActionType.notify_flag_types.values : post_action_type_id
     raise AlreadyActed if PostAction.where(user_id: user_id)
-        .where(post_id: post_id)
-        .where(post_action_type_id: post_action_type_ids)
-        .where(deleted_at: nil)
-        .where(disagreed_at: nil)
-        .where(targets_topic: targets_topic)
-        .exists?
+      .where(post_id: post_id)
+      .where(post_action_type_id: post_action_type_ids)
+      .where(deleted_at: nil)
+      .where(disagreed_at: nil)
+      .where(targets_topic: targets_topic)
+      .exists?
   end
 
   # Returns the flag counts for a post, taking into account that some users
   # can weigh flags differently.
   def self.flag_counts_for(post_id)
-    flag_counts = exec_sql("SELECT SUM(CASE
-                                         WHEN pa.disagreed_at IS NULL AND pa.staff_took_action THEN :flags_required_to_hide_post
-                                         WHEN pa.disagreed_at IS NULL AND NOT pa.staff_took_action THEN 1
-                                         ELSE 0
-                                       END) AS new_flags,
-                                   SUM(CASE
-                                         WHEN pa.disagreed_at IS NOT NULL AND pa.staff_took_action THEN :flags_required_to_hide_post
-                                         WHEN pa.disagreed_at IS NOT NULL AND NOT pa.staff_took_action THEN 1
-                                         ELSE 0
-                                       END) AS old_flags
-                            FROM post_actions AS pa
-                              INNER JOIN users AS u ON u.id = pa.user_id
-                            WHERE pa.post_id = :post_id
-                              AND pa.post_action_type_id IN (:post_action_types)
-                              AND pa.deleted_at IS NULL",
-                            post_id: post_id,
-                            post_action_types: PostActionType.auto_action_flag_types.values,
-                            flags_required_to_hide_post: SiteSetting.flags_required_to_hide_post).first
+    params = {
+      post_id: post_id,
+      post_action_types: PostActionType.auto_action_flag_types.values,
+      flags_required_to_hide_post: SiteSetting.flags_required_to_hide_post
+    }
 
-    [flag_counts['old_flags'].to_i, flag_counts['new_flags'].to_i]
+    DB.query_single(<<~SQL, params)
+      SELECT COALESCE(SUM(CASE
+                 WHEN pa.disagreed_at IS NOT NULL AND pa.staff_took_action THEN :flags_required_to_hide_post
+                 WHEN pa.disagreed_at IS NOT NULL AND NOT pa.staff_took_action THEN 1
+                 ELSE 0
+               END),0) AS old_flags,
+            COALESCE(SUM(CASE
+                 WHEN pa.disagreed_at IS NULL AND pa.staff_took_action THEN :flags_required_to_hide_post
+                 WHEN pa.disagreed_at IS NULL AND NOT pa.staff_took_action THEN 1
+                 ELSE 0
+               END), 0) AS new_flags
+    FROM post_actions AS pa
+      INNER JOIN users AS u ON u.id = pa.user_id
+    WHERE pa.post_id = :post_id
+      AND pa.post_action_type_id in (:post_action_types)
+      AND pa.deleted_at IS NULL
+    SQL
   end
 
   def post_action_type_key
@@ -440,9 +501,6 @@ SQL
 
     # We probably want to refactor this method to something cleaner.
     case post_action_type_key
-    when :vote
-      # Voting also changes the sort_order
-      Post.where(id: post_id).update_all ["vote_count = :count, sort_order = :max - :count", count: count, max: Topic.max_sort_order]
     when :like
       # 'like_score' is weighted higher for staff accounts
       score = PostAction.joins(:user)
@@ -506,9 +564,7 @@ SQL
 
   MAXIMUM_FLAGS_PER_POST = 3
 
-  def self.auto_close_if_threshold_reached(topic)
-    return if topic.nil? || topic.closed?
-
+  def self.auto_close_threshold_reached?(topic)
     flags = PostAction.active
       .flags
       .joins(:post)
@@ -521,6 +577,13 @@ SQL
     return if flags.count < SiteSetting.num_flaggers_to_close_topic
     # we need a minimum number of flags
     return if flags.sum { |f| f[1] } < SiteSetting.num_flags_to_close_topic
+
+    true
+  end
+
+  def self.auto_close_if_threshold_reached(topic)
+    return if topic.nil? || topic.closed?
+    return unless auto_close_threshold_reached?(topic)
 
     # the threshold has been reached, we will close the topic waiting for intervention
     topic.update_status("closed", true, Discourse.system_user,
@@ -538,21 +601,29 @@ SQL
   end
 
   def self.auto_hide_if_needed(acting_user, post, post_action_type)
-    return if post.hidden
+    return if post.hidden?
+    return if (!acting_user.staff?) && post.user&.staff?
 
     if post_action_type == :spam &&
        acting_user.has_trust_level?(TrustLevel[3]) &&
-       post.user.trust_level == TrustLevel[0]
+       post.user&.trust_level == TrustLevel[0]
 
       hide_post!(post, post_action_type, Post.hidden_reasons[:flagged_by_tl3_user])
 
-    elsif PostActionType.auto_action_flag_types.include?(post_action_type) &&
-          SiteSetting.flags_required_to_hide_post > 0
+    elsif PostActionType.auto_action_flag_types.include?(post_action_type)
 
-      _old_flags, new_flags = PostAction.flag_counts_for(post.id)
+      if acting_user.has_trust_level?(TrustLevel[4]) &&
+         !acting_user.staff? &&
+         post.user&.trust_level != TrustLevel[4]
 
-      if new_flags >= SiteSetting.flags_required_to_hide_post
-        hide_post!(post, post_action_type, guess_hide_reason(post))
+        hide_post!(post, post_action_type, Post.hidden_reasons[:flagged_by_tl4_user])
+      elsif SiteSetting.flags_required_to_hide_post > 0
+
+        _old_flags, new_flags = PostAction.flag_counts_for(post.id)
+
+        if new_flags >= SiteSetting.flags_required_to_hide_post
+          hide_post!(post, post_action_type, guess_hide_reason(post))
+        end
       end
     end
   end
@@ -563,6 +634,8 @@ SQL
     unless reason
       reason = guess_hide_reason(post)
     end
+
+    hiding_again = post.hidden_at.present?
 
     post.hidden = true
     post.hidden_at = Time.zone.now
@@ -576,11 +649,19 @@ SQL
       options = {
         url: post.url,
         edit_delay: SiteSetting.cooldown_minutes_after_hiding_posts,
-        flag_reason: I18n.t("flag_reasons.#{post_action_type}"),
+        flag_reason: I18n.t(
+          "flag_reasons.#{post_action_type}",
+          locale: SiteSetting.default_locale,
+          base_path: Discourse.base_path
+        )
       }
 
-      Jobs.enqueue_in(5.seconds, :send_system_message, user_id: post.user.id, message_type: :post_hidden, message_options: options)
+      Jobs.enqueue_in(5.seconds, :send_system_message,
+                      user_id: post.user.id,
+                      message_type: hiding_again ? :post_hidden_again : :post_hidden,
+                      message_options: options)
     end
+    update_flagged_posts_count
   end
 
   def self.guess_hide_reason(post)
@@ -591,7 +672,7 @@ SQL
 
   def self.post_action_type_for_post(post_id)
     post_action = PostAction.find_by(deferred_at: nil, post_id: post_id, post_action_type_id: PostActionType.notify_flag_types.values, deleted_at: nil)
-    PostActionType.types[post_action.post_action_type_id]
+    PostActionType.types[post_action.post_action_type_id] if post_action
   end
 
   def self.target_moderators
@@ -624,8 +705,8 @@ end
 #
 # Indexes
 #
-#  idx_unique_actions                                     (user_id,post_action_type_id,post_id,targets_topic) UNIQUE
-#  idx_unique_flags                                       (user_id,post_id,targets_topic) UNIQUE
+#  idx_unique_actions                                     (user_id,post_action_type_id,post_id,targets_topic) UNIQUE WHERE ((deleted_at IS NULL) AND (disagreed_at IS NULL) AND (deferred_at IS NULL))
+#  idx_unique_flags                                       (user_id,post_id,targets_topic) UNIQUE WHERE ((deleted_at IS NULL) AND (disagreed_at IS NULL) AND (deferred_at IS NULL) AND (post_action_type_id = ANY (ARRAY[3, 4, 7, 8])))
 #  index_post_actions_on_post_id                          (post_id)
-#  index_post_actions_on_user_id_and_post_action_type_id  (user_id,post_action_type_id)
+#  index_post_actions_on_user_id_and_post_action_type_id  (user_id,post_action_type_id) WHERE (deleted_at IS NULL)
 #

@@ -1,35 +1,56 @@
-import computed from 'ember-addons/ember-computed-decorators';
+import computed from "ember-addons/ember-computed-decorators";
+const { isEmpty, makeArray } = Ember;
 
 export default Ember.Component.extend({
   layoutName: "select-kit/templates/components/select-kit/select-kit-header",
-  classNames: ["select-kit-header", "select-box-kit-header"],
-  classNameBindings: ["isFocused"],
+  classNames: ["select-kit-header"],
+  classNameBindings: ["isFocused", "isNone"],
   attributeBindings: [
-    "dataName:data-name",
     "tabindex",
     "ariaLabel:aria-label",
     "ariaHasPopup:aria-haspopup",
-    "title"
+    "sanitizedTitle:title",
+    "value:data-value",
+    "name:data-name"
   ],
+
+  forceEscape: Ember.computed.alias("options.forceEscape"),
+
+  isNone: Ember.computed.none("computedContent.value"),
 
   ariaHasPopup: true,
 
-  ariaLabel: Ember.computed.alias("title"),
+  ariaLabel: Ember.computed.or("computedContent.ariaLabel", "sanitizedTitle"),
+
+  @computed("computedContent.title", "name")
+  title(computedContentTitle, name) {
+    if (computedContentTitle) return computedContentTitle;
+    if (name) return name;
+
+    return "";
+  },
+
+  // this might need a more advanced solution
+  // but atm it's the only case we have to handle
+  @computed("title")
+  sanitizedTitle(title) {
+    return String(title).replace("&hellip;", "");
+  },
+
+  label: Ember.computed.or("computedContent.label", "title", "name"),
 
   name: Ember.computed.alias("computedContent.name"),
 
+  value: Ember.computed.alias("computedContent.value"),
+
   @computed("computedContent.icon", "computedContent.icons")
   icons(icon, icons) {
-    return Ember.makeArray(icon).concat(icons).filter(i => !Ember.isEmpty(i));
+    return makeArray(icon)
+      .concat(icons)
+      .filter(i => !isEmpty(i));
   },
 
-  @computed("computedContent.dataName", "name")
-  dataName(dataName, name) { return dataName || name; },
-
-  @computed("computedContent.title", "name")
-  title(title, name) { return title || name; },
-
   click() {
-    this.sendAction("onToggle");
+    this.onToggle();
   }
 });

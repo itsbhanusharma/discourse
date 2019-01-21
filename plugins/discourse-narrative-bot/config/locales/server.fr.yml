@@ -7,7 +7,7 @@
 
 fr:
   site_settings:
-    discourse_narrative_bot_enabled: 'Activer l''assistant Discourse'
+    discourse_narrative_bot_enabled: 'Activer le rotbot de narration Discourse (discobot)'
     disable_discourse_narrative_bot_welcome_post: "Désactiver le message de bienvenue de l'assistant Discourse"
     discourse_narrative_bot_ignored_usernames: "Noms d'utilisateurs que l'assistant Discourse doit ignorer"
     discourse_narrative_bot_disable_public_replies: "Désactiver les réponses publiques de l'assistant Discourse"
@@ -53,7 +53,7 @@ fr:
         quote: "La difficulté est porteuse d'occasions"
         author: "Albert Einstein"
       '2':
-        quote: "Vous devez être le changement que vous voulez voir dans ce monde."
+        quote: "La liberté ne signifie rien s'il n'y a pas la liberté de se tromper."
         author: "Mahatma Gandhi"
       '3':
         quote: "Ne pleurez pas parce que c'est fini, souriez parce que c'est arrivé !"
@@ -94,7 +94,7 @@ fr:
         '8': "De bonnes perspectives"
         '9': "Oui"
         '10': "Les signent tendent vers le oui"
-        '11': "Réponse incertaine essayez de nouveau"
+        '11': "Réponse incertaine, essayez de nouveau"
         '12': "Demander à nouveau plus tard"
         '13': "Il vaut mieux ne pas vous le dire maintenant"
         '14': "Impossible à prédire pour le moment"
@@ -136,31 +136,32 @@ fr:
         second_response: |-
           Vraiment désolé. Je ne comprend toujours pas .:anguished:
 
-          Je suis juste un robot, mais si vous souhaitez contacter une personne réelle, consultez [notre page de contact](/ about).
+          Je suis juste un robot, mais si vous souhaitez contacter une personne réelle, consultez [notre page de contact](%{base_path}/ about).
 
           Pendant ce temps là, je serais silencieux.
     new_user_narrative:
       reset_trigger: "nouvel utilisateur"
+      title: "Certificat de complétion des étapes de nouvel utilisateur"
       cert_title: "En reconnaissance de l'accomplissement avec succès du tutoriel nouvel utilisateur"
       hello:
-        title: ":robot: Bienvenue !"
+        title: "Bienvenue !"
         message: |-
           Merci de vous être inscrit à %{title}, et bienvenue !
 
-          - Je ne suis qu'un robot, mais [notre équipe](/about) est également disponible si vous avez besoin de contacter quelqu'un.
+          - Je ne suis qu'un robot, mais [notre équipe](%{base_uri}/about) est également disponible si vous avez besoin de contacter quelqu'un.
 
-          - Pour des raisons de sécurité, nous avons temporairement limité ce que les nouveaux utilisateurs peuvent faire. Vous obtiendrez de nouvelles possibilités (et des [badges](/badges)) au fur et à mesure que nous vous connaitrons.
+          - Pour des raisons de sécurité, nous avons temporairement limité ce que les nouveaux utilisateurs peuvent faire. Vous obtiendrez de nouvelles possibilités (et des [badges](%{base_uri}/badges)) au fur et à mesure que nous vous connaitrons.
 
-          - Nous croyons en [un comportement communautaire civilisé](/guidelines) de tout temps.
+          - Nous croyons en [un comportement communautaire civilisé](%{base_uri}/guidelines) de tout temps.
       onebox:
         instructions: |-
           Maintenant, pouvez-vous partager l'un de ces liens avec moi ? Répondez avec **un lien sur une ligne vide**, et il sera automatiquement transformé pour inclure un astucieux résumé.
 
-          Pour copier un lien, tapez et maintenant appuyé sur mobile, ou utilisez le clic droit de votre souris:
+          Pour copier un lien, tapez et maintenant appuyé sur mobile, ou utilisez le clic droit de votre dispositif de pointage (souris):
 
-          - https://fr.wikipedia.org/wiki/Jeu_de_mots
-          - https://fr.wikipedia.org/wiki/Liste_de_morts_insolites
-          - https://fr.wikipedia.org/wiki/Orthographe_pour_calculatrice
+          <https://fr.wikipedia.org/wiki/Jeu_de_mots>
+          <https://fr.wikipedia.org/wiki/Liste_de_morts_insolites>
+          <https://fr.wikipedia.org/wiki/Orthographe_pour_calculatrice>
         reply: |-
           Super ! Ça fonctionne pour la plupart <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-link.png" width="16" height="16"> des liens. N'oubliez pas, ils doivent être sur une ligne _vide_, sans rien devant, ni derrière.
         not_found: |-
@@ -235,7 +236,7 @@ fr:
 
           - Tapez <kbd>:</kbd> puis complétez le nom de l'emoji  `:tada:`
 
-          - Appuyez sur le bouton emoji <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-smile.png" width="16" height="16">~dans l'éditeur, ou sur le clavier de votre mobile.
+          - Appuyez sur le bouton emoji <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-smile.png" width="16" height="16"> dans l'éditeur, ou sur le clavier de votre mobile.
         reply: |-
           C'est :sparkles: _emojitastic !_ :sparkles:
         not_found: |-
@@ -263,9 +264,9 @@ fr:
 
           > :imp: J'ai écris quelque chose de très méchant ici
 
-          Je devine que vous savez ce que vous avez à faire. **Signalez ce message** comme inapproprié !
+          Je devine que vous savez ce que vous avez à faire. **Signalez ce message** <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-flag.png" width="16" height="16"> comme inapproprié !
         reply: |-
-          [Notre équipe](/groups/staff) sera notifié de façon privée de votre signalement. Si assez de membres de la communauté signalent un message, il sera automatiquement masqué par précaution.
+          [Notre équipe](%{base_uri}/groups/staff) sera notifié de façon privée de votre signalement. Si assez de membres de la communauté signalent un message, il sera automatiquement masqué par précaution.
           (Puisque je n'ai pas réellement écrit un article méchant :ange: j'ai anticipé et j'ai enlevé le signalement pour le moment.)
         not_found: |-
           Oh non, mon méchant message n'a pas encore été signalé. :worried: Pouvez-vous le signaler comme inapproprié en utilisant le **drapeau** <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-flag.png" width="16" height="16">? N'oubliez pas d'utiliser le bouton Afficher plus<img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16"> pour afficher plus d'actions pour chaque message.
@@ -273,7 +274,7 @@ fr:
         instructions: |-
           _psst_ … J'ai caché une surprise dans ce sujet. Si vous aimez les challenges, sélectionnez **l’icône de recherche** <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-search.png" width="16" height="16"> en haut à droite &#8599; pour la trouver.
 
-          Essayer de chercher le terme "capy​bara" dans ce sujet.
+          Essayer de chercher le terme "capy​&#8203;bara" dans ce sujet.
         hidden_message: |-
           Comment avez-vous pu rater le capy​bara ? :wink:
 
@@ -296,7 +297,7 @@ fr:
 
           %{certificate}
 
-          C'est tout pour le moment ! Regardez  [**nos dernières discussions**](/latest) ou [**les catégories de discussion**](/categories). :sunglasses:
+          C'est tout pour le moment ! Regardez  [**nos dernières discussions**](%{base_uri}/latest) ou [**les catégories de discussion**](%{base_uri}/categories). :sunglasses:
 
           (Si vous souhaitez parler avec moi encore une fois pour en apprendre plus, envoyez moi un message ou mentionnez `@%{discobot_username}` n'importe quand !)
       certificate:
@@ -306,7 +307,7 @@ fr:
       cert_title: "En reconnaissance de l'accomplissement avec succès du tutoriel utilisateur avancé "
       title: ':arrow_up: Fonctionnalités utilisateur avancé'
       start_message: |-
-        En tant qu'utilisateur _averti_, avez-vous déjà visité la page [mes préférences](/my/preferences) @%{username}? Il y a beaucoup de possibilité pour personnaliser votre expérience, comme en sélectionnant un thème clair ou foncé.
+        En tant qu'utilisateur _averti_, avez-vous déjà visité la page [mes préférences](%{base_uri}/my/preferences) @%{username}? Il y a beaucoup de possibilité pour personnaliser votre expérience, comme en sélectionnant un thème clair ou foncé.
 
         Mais je divague, commençons !
       edit:
@@ -325,11 +326,11 @@ fr:
           Remarquez que les éditions après 5 minutes seront considérés comme des modifications publiques, et qu'un petit crayon apparaitra dans le coin haut droit avec le nombre de modification.
       delete:
         instructions: |-
-          Si vous souhaitez effacer un message que vous avez écrit, vous pouvez le supprimer.
+          Si vous souhaitez retirer un message que vous avez écrit, vous pouvez le supprimer.
 
           Allons-y et **supprimez** un de vos messages précédents en utilisant la <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-trash.png" width="16" height="16"> **suppression**. Attention à ne pas supprimer le premier message !
         not_found: |-
-          Je ne vois toujours aucun message supprimé ! Rappelez-vous, <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16"> afficher plus révélera <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-trash.png" width="16" height="16">supprimer.
+          Je ne vois toujours aucun message supprimé ! Rappelez-vous, <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16"> afficher plus révélera <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-trash.png" width="16" height="16"> supprimer.
         reply: |-
           Whoa ! :boom:
 
@@ -341,7 +342,7 @@ fr:
 
           Pouvez-vous me faire une faveur et <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-rotate-left.png" width="16" height="16"> le **restaurer** ?
         not_found: |-
-          Des soucis ? Rappelez-vous: <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16"> Afficher plus révélera <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-rotate-left.png" width="16" height="16"> restaurer.
+          Je ne vois toujours aucun message supprimé ! Rappelez-vous, <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-ellipsis.png" width="16" height="16"> afficher plus révélera <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-rotate-left.png" width="16" height="16"> supprimer.
         reply: |-
           Pfiou, c'était moins une ! Merci d'avoir réparé ça ! :wink:
 
@@ -363,15 +364,15 @@ fr:
         instructions: |-
           Chaque sujet a un niveau de notification. Il démarre comme 'normal', c'est à dire que vous ne serez notifié que quand quelqu'un vous parle directement.
 
-          Par défaut, le niveau de notification pour un message privé est configuré au plus haut niveau de 'surveillance', c'est à dire que vous serez notifié et chaque nouvelle réponse. Mais vous pouvez changer le niveau de notification pour _n'importe quel_ sujet en 'Surveiller', 'Suivi', ou 'Silencieux'.
+          Par défaut, le niveau de notification pour un message privé est configuré au plus haut niveau de 'surveillance', c'est à dire que vous serez notifié à chaque nouvelle réponse. Mais vous pouvez changer le niveau de notification pour _n'importe quel_ sujet en 'Surveiller', 'Suivi', ou 'Silencieux'.
 
-          Essayons de changer le niveau de notification pour ce sujet. En bas de ce sujet, vous trouverez un bouton qui vous indique que vous **Surveillez** ce sujet. Pouvez-vous changer le niveau de notification pour **Suivi**' ?
+          Essayons de changer le niveau de notification pour ce sujet. En bas de ce sujet, vous trouverez un bouton qui vous indique que vous **Surveillez** ce sujet. Pouvez-vous changer le niveau de notification pour **Suivi**'?
         not_found: |-
           Il semble que vous êtes encore en train de Surveillez :eyes: ce sujet ! Si vous avez des difficultés à le trouver, le bouton du niveau de notification est situé sous le sujet.
         reply: |-
           Super boulot ! J’espère que vous n'avez pas mis ce sujet en silencieux car il m'arrive parfois d'être un peu bavard :grin:
 
-          Remarquez que quand vous répondez à un sujet, ou lisez un sujet pendant plusieurs minutes, le niveau de notification est automatiquement mis sur 'Suivi'. Vous pouvez changer cela dans [vos préférences utilisateur](/my/preferences).
+          Remarquez que quand vous répondez à un sujet, ou lisez un sujet pendant plusieurs minutes, le niveau de notification est automatiquement mis sur 'Suivi'. Vous pouvez changer cela dans [vos préférences utilisateur](%{base_uri}/my/preferences).
       poll:
         instructions: |-
           Savez-vous que vous pouvez ajouter un sondage sur n'importe quel message ? Essayez en utilisant la <img src="%{base_uri}/plugins/discourse-narrative-bot/images/font-awesome-gear.png" width="16" height="16"> roue dans l'éditeur pour **créer un sondage**.

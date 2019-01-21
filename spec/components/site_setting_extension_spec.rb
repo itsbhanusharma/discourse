@@ -4,6 +4,24 @@ require_dependency 'site_settings/local_process_provider'
 
 describe SiteSettingExtension do
 
+  # We disable message bus here to avoid a large amount
+  # of uneeded messaging, tests are careful to call refresh
+  # when they need to.
+  #
+  # DistributedCache used by locale handler can under certain
+  # cases take a tiny bit to stabalize.
+  #
+  # TODO: refactor SiteSettingExtension not to rely on statics in
+  # DefaultsProvider
+  #
+  before do
+    MessageBus.off
+  end
+
+  after do
+    MessageBus.on
+  end
+
   describe '#types' do
     context "verify enum sequence" do
       before do
@@ -24,19 +42,36 @@ describe SiteSettingExtension do
     SiteSettings::LocalProcessProvider.new
   end
 
-  def new_settings(provider)
-    Class.new do
-      extend SiteSettingExtension
-      self.provider = provider
-    end
-  end
-
   let :settings do
     new_settings(provider_local)
   end
 
   let :settings2 do
     new_settings(provider_local)
+  end
+
+  it "Does not leak state cause changes are not linked" do
+    t1 = Thread.new do
+      5.times do
+        settings = new_settings(SiteSettings::LocalProcessProvider.new)
+        settings.setting(:title, 'test')
+        settings.title = 'title1'
+        expect(settings.title).to eq 'title1'
+
+      end
+    end
+
+    t2 = Thread.new do
+      5.times do
+        settings = new_settings(SiteSettings::LocalProcessProvider.new)
+        settings.setting(:title, 'test')
+        settings.title = 'title2'
+        expect(settings.title).to eq 'title2'
+      end
+    end
+
+    t1.join
+    t2.join
   end
 
   describe "refresh!" do
@@ -79,6 +114,33 @@ describe SiteSettingExtension do
       expect(settings2.hello).to eq(99)
     end
 
+    it "does not override types in the type supervisor" do
+      settings.setting(:foo, "bar")
+      settings.provider.save(:foo, "bar", SiteSetting.types[:enum])
+      settings.refresh!
+      expect(settings.foo).to eq("bar")
+
+      settings.foo = "baz"
+      expect(settings.foo).to eq("baz")
+    end
+
+    it "clears the cache for site setting uploads" do
+      settings.setting(:upload_type, "", type: :upload)
+      upload = Fabricate(:upload)
+      settings.upload_type = upload
+
+      expect(settings.upload_type).to eq(upload)
+      expect(settings.send(:uploads)[:upload_type]).to eq(upload)
+
+      upload2 = Fabricate(:upload)
+      settings.provider.save(:upload_type, upload2.id, SiteSetting.types[:upload])
+
+      expect do
+        settings.refresh!
+      end.to change { settings.send(:uploads)[:upload_type] }.from(upload).to(nil)
+
+      expect(settings.upload_type).to eq(upload2)
+    end
   end
 
   describe "multisite" do
@@ -101,8 +163,11 @@ describe SiteSettingExtension do
     end
 
     it "should have the correct desc" do
-      I18n.expects(:t).with("site_settings.test_setting").returns("test description")
-      expect(settings.description(:test_setting)).to eq("test description")
+      I18n.backend.store_translations(:en, site_settings: { test_setting: "test description <a href='%{base_path}/admin'>/admin</a>" })
+      expect(settings.description(:test_setting)).to eq("test description <a href='/admin'>/admin</a>")
+
+      Discourse.stubs(:base_path).returns("/forum")
+      expect(settings.description(:test_setting)).to eq("test description <a href='/forum/admin'>/admin</a>")
     end
 
     it "should have the correct default" do
@@ -388,15 +453,34 @@ describe SiteSettingExtension do
       settings.refresh!
       expect {
         settings.set("provider", "haxxed")
-      }.to raise_error(ArgumentError)
+      }.to raise_error(Discourse::InvalidParameters)
     end
   end
 
   describe ".set_and_log" do
+    before do
+      settings.setting(:s3_secret_access_key, "old_secret_key", secret: true)
+      settings.setting(:title, "Discourse v1")
+      settings.refresh!
+    end
+
     it "raises an error when set for an invalid setting name" do
       expect {
         settings.set_and_log("provider", "haxxed")
-      }.to raise_error(ArgumentError)
+      }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "scrubs secret setting values from logs" do
+      settings.set_and_log("s3_secret_access_key", "new_secret_key")
+      expect(UserHistory.last.previous_value).to eq("[FILTERED]")
+      expect(UserHistory.last.new_value).to eq("[FILTERED]")
+    end
+
+    it "works" do
+      settings.set_and_log("title", "Discourse v2")
+      expect(settings.title).to eq("Discourse v2")
+      expect(UserHistory.last.previous_value).to eq("Discourse v1")
+      expect(UserHistory.last.new_value).to eq("Discourse v2")
     end
   end
 
@@ -441,6 +525,15 @@ describe SiteSettingExtension do
   end
 
   describe "shadowed_by_global" do
+
+    context "default_locale" do
+      it "supports adding a default locale via a global" do
+        global_setting :default_locale, 'zh_CN'
+        settings.default_locale = 'en'
+        expect(settings.default_locale).to eq('zh_CN')
+      end
+    end
+
     context "without global setting" do
       before do
         settings.setting(:trout_api_key, 'evil', shadowed_by_global: true)
@@ -528,6 +621,27 @@ describe SiteSettingExtension do
     end
   end
 
+  describe "secret" do
+    before do
+      settings.setting(:superman_identity, 'Clark Kent', secret: true)
+      settings.refresh!
+    end
+
+    it "is in the `secret_settings` collection" do
+      expect(settings.secret_settings.include?(:superman_identity)).to eq(true)
+    end
+
+    it "can be retrieved" do
+      expect(settings.superman_identity).to eq("Clark Kent")
+    end
+
+    it "is present in all_settings by default" do
+      secret_setting = settings.all_settings.find { |s| s[:setting] == :superman_identity }
+      expect(secret_setting).to be_present
+      expect(secret_setting[:secret]).to eq(true)
+    end
+  end
+
   describe 'locale default overrides are respected' do
     before do
       settings.setting(:test_override, 'default', locale_default: { zh_CN: 'cn' })
@@ -583,6 +697,52 @@ describe SiteSettingExtension do
     it 'refreshes the client' do
       Discourse.expects(:request_refresh!)
       settings.default_locale = 'zh_CN'
+    end
+  end
+
+  describe "get_hostname" do
+
+    it "properly extracts the hostname" do
+      expect(settings.send(:get_hostname, "discourse.org")).to eq("discourse.org")
+      expect(settings.send(:get_hostname, " discourse.org ")).to eq("discourse.org")
+      expect(settings.send(:get_hostname, "@discourse.org")).to eq("discourse.org")
+      expect(settings.send(:get_hostname, "https://discourse.org")).to eq("discourse.org")
+    end
+
+  end
+
+  describe '.client_settings_json_uncached' do
+    it 'should return the right json value' do
+      upload = Fabricate(:upload)
+      settings.setting(:upload_type, upload.id.to_s, type: :upload, client: true)
+      settings.setting(:string_type, 'haha', client: true)
+      settings.refresh!
+
+      expect(settings.client_settings_json_uncached).to eq(
+        %Q|{"default_locale":"en","upload_type":"#{upload.url}","string_type":"haha"}|
+      )
+    end
+  end
+
+  describe '.setup_methods' do
+    describe 'for uploads site settings' do
+      let(:upload) { Fabricate(:upload) }
+      let(:upload2) { Fabricate(:upload) }
+
+      it 'should return the upload record' do
+        settings.setting(:some_upload, upload.id.to_s, type: :upload)
+
+        expect(settings.some_upload).to eq(upload)
+
+        # Ensure that we cache the upload record
+        expect(settings.some_upload.object_id).to eq(
+          settings.some_upload.object_id
+        )
+
+        settings.some_upload = upload2
+
+        expect(settings.some_upload).to eq(upload2)
+      end
     end
   end
 

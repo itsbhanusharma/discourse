@@ -1,3 +1,4 @@
 export default function hbs() {
-  console.log('Templates should be precompiled server side');
+  // eslint-disable-next-line no-console
+  console.log("Templates should be precompiled server side");
 }

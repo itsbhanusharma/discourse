@@ -18,7 +18,7 @@ class UserSummary
       .listable_topics
       .visible
       .where(user: @user)
-      .order('like_count DESC, created_at ASC')
+      .order('like_count DESC, created_at DESC')
       .limit(MAX_SUMMARY_RESULTS)
   end
 
@@ -30,7 +30,7 @@ class UserSummary
       .merge(Topic.listable_topics.visible.secured(@guardian))
       .where(user: @user)
       .where('post_number > 1')
-      .order('posts.like_count DESC, posts.created_at ASC')
+      .order('posts.like_count DESC, posts.created_at DESC')
       .limit(MAX_SUMMARY_RESULTS)
   end
 
@@ -42,7 +42,7 @@ class UserSummary
       .merge(Topic.listable_topics.visible.secured(@guardian))
       .where(user: @user)
       .where(internal: false, reflection: false, quote: false)
-      .order('clicks DESC, topic_links.created_at ASC')
+      .order('clicks DESC, topic_links.created_at DESC')
       .limit(MAX_SUMMARY_RESULTS)
   end
 
@@ -60,19 +60,9 @@ class UserSummary
       .order('COUNT(*) DESC')
       .limit(MAX_SUMMARY_RESULTS)
       .pluck('acting_user_id, COUNT(*)')
-      .each { |l| likers[l[0].to_s] = l[1] }
+      .each { |l| likers[l[0]] = l[1] }
 
-    User.where(id: likers.keys)
-      .pluck(:id, :username, :name, :uploaded_avatar_id)
-      .map do |u|
-      UserWithCount.new(
-        id: u[0],
-        username: u[1],
-        name: u[2],
-        avatar_template: User.avatar_template(u[1], u[3]),
-        count: likers[u[0].to_s]
-      )
-    end.sort_by { |u| -u[:count] }
+    user_counts(likers)
   end
 
   def most_liked_users
@@ -85,19 +75,9 @@ class UserSummary
       .order('COUNT(*) DESC')
       .limit(MAX_SUMMARY_RESULTS)
       .pluck('user_actions.user_id, COUNT(*)')
-      .each { |l| liked_users[l[0].to_s] = l[1] }
+      .each { |l| liked_users[l[0]] = l[1] }
 
-    User.where(id: liked_users.keys)
-      .pluck(:id, :username, :name, :uploaded_avatar_id)
-      .map do |u|
-      UserWithCount.new(
-        id: u[0],
-        username: u[1],
-        name: u[2],
-        avatar_template: User.avatar_template(u[1], u[3]),
-        count: liked_users[u[0].to_s]
-      )
-    end.sort_by { |u| -u[:count] }
+    user_counts(liked_users)
   end
 
   REPLY_ACTIONS ||= [UserAction::RESPONSE, UserAction::QUOTE, UserAction::MENTION]
@@ -117,19 +97,9 @@ class UserSummary
       .order('COUNT(*) DESC')
       .limit(MAX_SUMMARY_RESULTS)
       .pluck('replies.user_id, COUNT(*)')
-      .each { |r| replied_users[r[0].to_s] = r[1] }
+      .each { |r| replied_users[r[0]] = r[1] }
 
-    User.where(id: replied_users.keys)
-      .pluck(:id, :username, :name, :uploaded_avatar_id)
-      .map do |u|
-      UserWithCount.new(
-        id: u[0],
-        username: u[1],
-        name: u[2],
-        avatar_template: User.avatar_template(u[1], u[3]),
-        count: replied_users[u[0].to_s]
-      )
-    end.sort_by { |u| -u[:count] }
+    user_counts(replied_users)
   end
 
   def badges
@@ -155,6 +125,56 @@ class UserSummary
     @user.recent_time_read
   end
 
+  class CategoryWithCounts < OpenStruct
+    include ActiveModel::SerializerSupport
+    KEYS = [:id, :name, :color, :text_color, :slug, :read_restricted, :parent_category_id]
+  end
+
+  def top_categories
+    post_count_query = Post
+      .joins(:topic)
+      .includes(:topic)
+      .secured(@guardian)
+      .merge(Topic.listable_topics.visible.secured(@guardian))
+      .where(user: @user)
+      .group('topics.category_id')
+      .order('COUNT(*) DESC')
+
+    top_categories = {}
+
+    Category.where(id: post_count_query.limit(MAX_SUMMARY_RESULTS).pluck('category_id'))
+      .pluck(:id, :name, :color, :text_color, :slug, :read_restricted, :parent_category_id)
+      .each do |c|
+        top_categories[c[0].to_i] = CategoryWithCounts.new(
+          Hash[CategoryWithCounts::KEYS.zip(c)].merge(
+            topic_count: 0,
+            post_count: 0
+          )
+        )
+      end
+
+    post_count_query.where('post_number > 1')
+      .where('topics.category_id in (?)', top_categories.keys)
+      .pluck('category_id, COUNT(*)')
+      .each do |r|
+        top_categories[r[0].to_i].post_count = r[1]
+      end
+
+    Topic.listable_topics.visible.secured(@guardian)
+      .where('topics.category_id in (?)', top_categories.keys)
+      .where(user: @user)
+      .group('topics.category_id')
+      .order('COUNT(*) DESC')
+      .pluck('category_id, COUNT(*)')
+      .each do |r|
+        top_categories[r[0].to_i].topic_count = r[1]
+      end
+
+    top_categories.values.sort_by do |r|
+      -(r[:post_count] + r[:topic_count])
+    end
+  end
+
   delegate :likes_given,
            :likes_received,
            :days_visited,
@@ -164,5 +184,20 @@ class UserSummary
            :post_count,
            :time_read,
            to: :user_stat
+
+protected
+
+  def user_counts(user_hash)
+    user_ids = user_hash.keys
+
+    lookup = AvatarLookup.new(user_ids)
+    user_ids.map do |user_id|
+      lookup_hash = lookup[user_id]
+
+      UserWithCount.new(
+        lookup_hash.attributes.merge(count: user_hash[user_id])
+      ) if lookup_hash.present?
+    end.compact.sort_by { |u| -u[:count] }
+  end
 
 end

@@ -9,6 +9,8 @@ describe FinalDestination do
 
       force_get_hosts: ['https://force.get.com'],
 
+      preserve_fragment_url_hosts: ['https://eviltrout.com'],
+
       # avoid IP lookups in test
       lookup_ip: lambda do |host|
         case host
@@ -22,8 +24,7 @@ describe FinalDestination do
         when 'force.get.com' then '22.102.29.40'
         when 'wikipedia.com' then '1.2.3.4'
         else
-          as_ip = IPAddr.new(host) rescue nil
-          raise "couldn't lookup #{host}" if as_ip.nil?
+          as_ip = IPAddr.new(host)
           host
         end
       end
@@ -46,6 +47,14 @@ describe FinalDestination do
 
   def fd(url)
     FinalDestination.new(url, opts)
+  end
+
+  it 'correctly parses ignored hostnames' do
+    fd = FinalDestination.new('https://meta.discourse.org',
+      ignore_redirects: ['http://google.com', 'youtube.com', 'https://meta.discourse.org', '://bing.com']
+    )
+
+    expect(fd.ignored).to eq(['test.localhost', 'google.com', 'meta.discourse.org'])
   end
 
   describe '.resolve' do
@@ -176,7 +185,7 @@ describe FinalDestination do
             'Set-Cookie' => 'evil=trout'
           }
         )
-        stub_request(:head, 'https://discourse.org').to_return(status: 200)
+        stub_request(:head, 'https://discourse.org')
       end
 
       context "when the status code is 405" do
@@ -204,6 +213,97 @@ describe FinalDestination do
           expect(final.cookie).to eq('evil=trout')
         end
       end
+
+      it "correctly extracts cookies during GET" do
+        stub_request(:head, "https://eviltrout.com").to_return(status: 405)
+
+        stub_request(:get, "https://eviltrout.com")
+          .to_return(status: 302, body: "" , headers: {
+            "Location" => "https://eviltrout.com",
+            "Set-Cookie" => ["foo=219ffwef9w0f; expires=Mon, 19-Feb-2018 10:44:24 GMT; path=/; domain=eviltrout.com",
+                             "bar=1",
+                             "baz=2; expires=Tue, 19-Feb-2019 10:14:24 GMT; path=/; domain=eviltrout.com"]
+          })
+
+        stub_request(:head, "https://eviltrout.com")
+          .with(headers: { "Cookie" => "bar=1; baz=2; foo=219ffwef9w0f" })
+
+        final = FinalDestination.new("https://eviltrout.com", opts)
+        expect(final.resolve.to_s).to eq("https://eviltrout.com")
+        expect(final.status).to eq(:resolved)
+        expect(final.cookie).to eq("bar=1; baz=2; foo=219ffwef9w0f")
+      end
+    end
+
+    it "should use the correct format for cookies when there is only one cookie" do
+      stub_request(:head, "https://eviltrout.com")
+        .to_return(status: 302, headers: {
+          "Location" => "https://eviltrout.com",
+          "Set-Cookie" => "foo=219ffwef9w0f; expires=Mon, 19-Feb-2018 10:44:24 GMT; path=/; domain=eviltrout.com"
+        })
+
+      stub_request(:head, "https://eviltrout.com")
+        .with(headers: { "Cookie" => "foo=219ffwef9w0f" })
+
+      final = FinalDestination.new("https://eviltrout.com", opts)
+      expect(final.resolve.to_s).to eq("https://eviltrout.com")
+      expect(final.status).to eq(:resolved)
+      expect(final.cookie).to eq("foo=219ffwef9w0f")
+    end
+
+    it "should use the correct format for cookies when there are multiple cookies" do
+      stub_request(:head, "https://eviltrout.com")
+        .to_return(status: 302, headers: {
+          "Location" => "https://eviltrout.com",
+          "Set-Cookie" => ["foo=219ffwef9w0f; expires=Mon, 19-Feb-2018 10:44:24 GMT; path=/; domain=eviltrout.com",
+                           "bar=1",
+                           "baz=2; expires=Tue, 19-Feb-2019 10:14:24 GMT; path=/; domain=eviltrout.com"]
+        })
+
+      stub_request(:head, "https://eviltrout.com")
+        .with(headers: { "Cookie" => "bar=1; baz=2; foo=219ffwef9w0f" })
+
+      final = FinalDestination.new("https://eviltrout.com", opts)
+      expect(final.resolve.to_s).to eq("https://eviltrout.com")
+      expect(final.status).to eq(:resolved)
+      expect(final.cookie).to eq("bar=1; baz=2; foo=219ffwef9w0f")
+    end
+
+    it "persists fragment url" do
+      origin_url = "https://eviltrout.com/origin/lib/code/foobar.rb"
+      upstream_url = "https://eviltrout.com/upstream/lib/code/foobar.rb"
+
+      redirect_response(origin_url, upstream_url)
+      stub_request(:head, upstream_url).to_return(doc_response)
+
+      final = FinalDestination.new("#{origin_url}#L154-L205", opts)
+      expect(final.resolve.to_s).to eq("#{upstream_url}#L154-L205")
+      expect(final.status).to eq(:resolved)
+    end
+  end
+
+  describe '.get' do
+
+    it "can correctly stream with a redirect" do
+      FinalDestination.clear_https_cache!("wikipedia.com")
+
+      stub_request(:get, "http://wikipedia.com/").
+        to_return(status: 302, body: "" , headers: { "location" => "https://wikipedia.com/" })
+
+      # webmock does not do chunks
+      stub_request(:get, "https://wikipedia.com/").
+        to_return(status: 200, body: "<html><head>" , headers: {})
+
+      result = nil
+      chunk = nil
+
+      result = FinalDestination.new("http://wikipedia.com", opts).get do |resp, c|
+        chunk = c
+        throw :done
+      end
+
+      expect(result).to eq("https://wikipedia.com/")
+      expect(chunk).to eq("<html><head>")
     end
   end
 
@@ -257,6 +357,20 @@ describe FinalDestination do
     it "returns false for a valid ipv4" do
       expect(fd("https://52.84.143.67").is_dest_valid?).to eq(true)
       expect(fd("https://104.25.153.10").is_dest_valid?).to eq(true)
+    end
+
+    it "returns false for short ip" do
+      lookup = lambda do |host|
+        # How IPs are looked up for single digits
+        if host == "0"
+          "0.0.0.0"
+        elsif host == "1"
+          "0.0.0.1"
+        end
+      end
+
+      expect(FinalDestination.new('https://0/logo.png', lookup_ip: lookup).is_dest_valid?).to eq(false)
+      expect(FinalDestination.new('https://1/logo.png', lookup_ip: lookup).is_dest_valid?).to eq(false)
     end
 
     it "returns false for private ipv4" do
@@ -316,13 +430,12 @@ describe FinalDestination do
 
       stub_request(:head, "http://wikipedia.com/image.png")
         .to_return(status: 302, body: "", headers: { location: 'https://wikipedia.com/image.png' })
+
       stub_request(:head, "https://wikipedia.com/image.png")
-        .to_return(status: 200, body: "", headers: [])
 
       fd('http://wikipedia.com/image.png').resolve
 
       stub_request(:head, "https://wikipedia.com/image2.png")
-        .to_return(status: 200, body: "", headers: [])
 
       fd('http://wikipedia.com/image2.png').resolve
     end

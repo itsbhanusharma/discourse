@@ -1,10 +1,16 @@
-import { default as computed } from 'ember-addons/ember-computed-decorators';
+import { default as computed } from "ember-addons/ember-computed-decorators";
+import { THEMES } from "admin/models/theme";
 
 export default Ember.Controller.extend({
-  @computed('model', 'model.@each')
-  sortedThemes(themes) {
-    return _.sortBy(themes.content, t => {
-      return [!t.get("default"), !t.get("user_selectable"), t.get("name").toLowerCase()];
-    });
+  currentTab: THEMES,
+
+  @computed("model", "model.@each.component")
+  fullThemes(themes) {
+    return themes.filter(t => !t.get("component"));
+  },
+
+  @computed("model", "model.@each.component")
+  childThemes(themes) {
+    return themes.filter(t => t.get("component"));
   }
 });

@@ -5,33 +5,45 @@ class PostMover
     @move_types ||= Enum.new(:new_topic, :existing_topic)
   end
 
-  def initialize(original_topic, user, post_ids)
+  def initialize(original_topic, user, post_ids, move_to_pm: false)
     @original_topic = original_topic
     @user = user
     @post_ids = post_ids
+    @move_to_pm = move_to_pm
   end
 
-  def to_topic(id)
+  def to_topic(id, participants: nil)
     @move_type = PostMover.move_types[:existing_topic]
 
+    topic = Topic.find_by_id(id)
+    raise Discourse::InvalidParameters unless topic.archetype == @original_topic.archetype
+
     Topic.transaction do
-      move_posts_to Topic.find_by_id(id)
+      move_posts_to topic
     end
+    add_allowed_users(participants) if participants.present? && @move_to_pm
+    topic
   end
 
-  def to_new_topic(title, category_id = nil)
+  def to_new_topic(title, category_id = nil, tags = nil)
     @move_type = PostMover.move_types[:new_topic]
 
     post = Post.find_by(id: post_ids.first)
     raise Discourse::InvalidParameters unless post
+    archetype = @move_to_pm ? Archetype.private_message : Archetype.default
 
     Topic.transaction do
-      move_posts_to Topic.create!(
+      new_topic = Topic.create!(
         user: post.user,
         title: title,
         category_id: category_id,
-        created_at: post.created_at
+        created_at: post.created_at,
+        archetype: archetype
       )
+      DiscourseTagging.tag_topic_by_names(new_topic, Guardian.new(user), tags)
+      move_posts_to new_topic
+      watch_new_topic
+      new_topic
     end
   end
 
@@ -47,7 +59,7 @@ class PostMover
     notify_users_that_posts_have_moved
     update_statistics
     update_user_actions
-    set_last_post_user_id(destination_topic)
+    update_last_post_stats
 
     if moving_all_posts
       @original_topic.update_status('closed', true, @user)
@@ -75,7 +87,11 @@ class PostMover
 
     posts.each do |post|
       post.is_first_post? ? create_first_post(post) : move(post)
+      if @move_to_pm
+        destination_topic.topic_allowed_users.build(user_id: post.user_id) unless destination_topic.topic_allowed_users.where(user_id: post.user_id).exists?
+      end
     end
+    destination_topic.save! if @move_to_pm
 
     PostReply.where("reply_id IN (:post_ids) OR post_id IN (:post_ids)", post_ids: post_ids).each do |post_reply|
       if post_reply.post && post_reply.reply && post_reply.reply.topic_id != post_reply.post.topic_id
@@ -96,6 +112,7 @@ class PostMover
       via_email: post.via_email,
       raw_email: post.raw_email,
       skip_validations: true,
+      created_at: post.created_at,
       guardian: Guardian.new(user)
     )
 
@@ -127,7 +144,8 @@ class PostMover
       update[:reply_to_user_id] = nil
     end
 
-    post.update(update)
+    post.attributes = update
+    post.save(validate: false)
 
     move_incoming_emails(post, post)
     move_email_logs(post, post)
@@ -149,7 +167,7 @@ class PostMover
   def move_email_logs(old_post, new_post)
     EmailLog
       .where(post_id: old_post.id)
-      .update_all(topic_id: new_post.topic_id, post_id: new_post.id)
+      .update_all(post_id: new_post.id)
   end
 
   def update_statistics
@@ -180,9 +198,14 @@ class PostMover
     move_type_str = PostMover.move_types[@move_type].to_s
 
     message = I18n.with_locale(SiteSetting.default_locale) do
-      I18n.t("move_posts.#{move_type_str}_moderator_post",
-             count: posts.length,
-             topic_link: "[#{destination_topic.title}](#{destination_topic.relative_url})")
+      I18n.t(
+        "move_posts.#{move_type_str}_moderator_post",
+        count: posts.length,
+        entity: @move_to_pm ? "message" : "topic",
+        topic_link: posts.first.is_first_post? ?
+          "[#{destination_topic.title}](#{destination_topic.relative_url})" :
+          "[#{destination_topic.title}](#{posts.first.url})"
+      )
     end
 
     original_topic.add_moderator_post(
@@ -204,9 +227,34 @@ class PostMover
     end
   end
 
-  def set_last_post_user_id(topic)
-    user_id = topic.posts.last.user_id rescue nil
-    return if user_id.nil?
-    topic.update_attribute :last_post_user_id, user_id
+  def update_last_post_stats
+    post = destination_topic.ordered_posts.where.not(post_type: Post.types[:whisper]).last
+    if post && post_ids.include?(post.id)
+      attrs = {}
+      attrs[:last_posted_at] = post.created_at
+      attrs[:last_post_user_id] = post.user_id
+      attrs[:bumped_at] = post.created_at unless post.no_bump
+      attrs[:updated_at] = Time.now
+      destination_topic.update_columns(attrs)
+    end
+  end
+
+  def watch_new_topic
+    TopicUser.change(
+      destination_topic.user,
+      destination_topic.id,
+      notification_level: TopicUser.notification_levels[:watching],
+      notifications_reason_id: TopicUser.notification_reasons[:created_topic]
+    )
+  end
+
+  def add_allowed_users(usernames)
+    return unless usernames.present?
+
+    names = usernames.split(',').flatten
+    User.where(username: names).find_each do |user|
+      destination_topic.topic_allowed_users.build(user_id: user.id) unless destination_topic.topic_allowed_users.where(user_id: user.id).exists?
+    end
+    destination_topic.save!
   end
 end

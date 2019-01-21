@@ -36,6 +36,10 @@ describe DiscourseNarrativeBot::TrackSelector do
     end_message.chomp
   end
 
+  before do
+    SiteSetting.queue_jobs = false
+  end
+
   describe '#select' do
     context 'in a PM with discobot' do
       let(:first_post) { Fabricate(:post, user: discobot_user) }
@@ -254,6 +258,7 @@ describe DiscourseNarrativeBot::TrackSelector do
 
             expect(new_post.raw).to eq(I18n.t(
               'discourse_narrative_bot.track_selector.do_not_understand.second_response',
+              base_path: Discourse.base_path,
               reset_trigger: "#{described_class.reset_trigger} #{DiscourseNarrativeBot::NewUserNarrative.reset_trigger}",
             ))
 

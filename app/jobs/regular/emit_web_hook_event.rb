@@ -2,10 +2,19 @@ require 'excon'
 
 module Jobs
   class EmitWebHookEvent < Jobs::Base
+    PING_EVENT = 'ping'.freeze
+    MAX_RETRY_COUNT = 4.freeze
+    RETRY_BACKOFF = 5
+
     def execute(args)
-      [:web_hook_id, :event_type].each do |key|
+      %i{
+        web_hook_id
+        event_type
+      }.each do |key|
         raise Discourse::InvalidParameters.new(key) unless args[key].present?
       end
+
+      @orig_args = args.dup
 
       web_hook = WebHook.find_by(id: args[:web_hook_id])
       raise Discourse::InvalidParameters.new(:web_hook_id) if web_hook.blank?
@@ -19,8 +28,11 @@ module Jobs
         return if web_hook.category_ids.present? && (!args[:category_id].present? ||
           !web_hook.category_ids.include?(args[:category_id]))
 
-        event_type = args[:event_type].to_s
-        return unless self.send("setup_#{event_type}", args)
+        return if web_hook.tag_ids.present? && (args[:tag_ids].blank? ||
+          (web_hook.tag_ids & args[:tag_ids]).blank?)
+
+        raise Discourse::InvalidParameters.new(:payload) unless args[:payload].present?
+        args[:payload] = JSON.parse(args[:payload])
       end
 
       web_hook_request(args, web_hook)
@@ -32,31 +44,12 @@ module Jobs
       Guardian.new(Discourse.system_user)
     end
 
-    def setup_post(args)
-      post = Post.find_by(id: args[:post_id])
-      return if post.blank?
-      args[:payload] = WebHookPostSerializer.new(post, scope: guardian, root: false).as_json
-    end
-
-    def setup_topic(args)
-      topic_view = (TopicView.new(args[:topic_id], Discourse.system_user) rescue nil)
-      return if topic_view.blank?
-      args[:payload] = WebHookTopicViewSerializer.new(topic_view, scope: guardian, root: false).as_json
-    end
-
-    def setup_user(args)
-      user = User.find_by(id: args[:user_id])
-      return if user.blank?
-      args[:payload] = WebHookUserSerializer.new(user, scope: guardian, root: false).as_json
-    end
-
     def ping_event?(event_type)
-      event_type.to_s == 'ping'.freeze
+      PING_EVENT == event_type.to_s
     end
 
     def build_web_hook_body(args, web_hook)
       body = {}
-      guardian = Guardian.new(Discourse.system_user)
       event_type = args[:event_type].to_s
 
       if ping_event?(event_type)
@@ -66,12 +59,11 @@ module Jobs
       end
 
       new_body = Plugin::Filter.apply(:after_build_web_hook_body, self, body)
-
       MultiJson.dump(new_body)
     end
 
     def web_hook_request(args, web_hook)
-      uri = URI(web_hook.payload_url)
+      uri = URI(web_hook.payload_url.strip)
 
       conn = Excon.new(
         uri.to_s,
@@ -81,6 +73,7 @@ module Jobs
 
       body = build_web_hook_body(args, web_hook)
       web_hook_event = WebHookEvent.create!(web_hook_id: web_hook.id)
+      response = nil
 
       begin
         content_type =
@@ -97,7 +90,7 @@ module Jobs
           'Content-Length' => body.bytesize,
           'Content-Type' => content_type,
           'Host' => uri.host,
-          'User-Agent' => "Discourse/" + Discourse::VERSION::STRING,
+          'User-Agent' => "Discourse/#{Discourse::VERSION::STRING}",
           'X-Discourse-Instance' => Discourse.base_url,
           'X-Discourse-Event-Id' => web_hook_event.id,
           'X-Discourse-Event-Type' => args[:event_type]
@@ -106,7 +99,7 @@ module Jobs
         headers['X-Discourse-Event'] = args[:event_name].to_s if args[:event_name].present?
 
         if web_hook.secret.present?
-          headers['X-Discourse-Event-Signature'] = "sha256=" + OpenSSL::HMAC.hexdigest("sha256", web_hook.secret, body)
+          headers['X-Discourse-Event-Signature'] = "sha256=#{OpenSSL::HMAC.hexdigest("sha256", web_hook.secret, body)}"
         end
 
         now = Time.zone.now
@@ -127,6 +120,17 @@ module Jobs
         }, user_ids: User.human_users.staff.pluck(:id))
       rescue
         web_hook_event.destroy!
+      end
+
+      retry_web_hook if response&.status != 200
+    end
+
+    def retry_web_hook
+      if SiteSetting.retry_web_hook_events?
+        @orig_args[:retry_count] = (@orig_args[:retry_count] || 0) + 1
+        return if @orig_args[:retry_count] > MAX_RETRY_COUNT
+        delay = RETRY_BACKOFF**(@orig_args[:retry_count] - 1)
+        Jobs.enqueue_in(delay.minutes, :emit_web_hook_event, @orig_args)
       end
     end
   end

@@ -63,7 +63,8 @@ class AdminUserIndexQuery
     if params[:stats].present? && params[:stats] == false
       klass.order(order.reject(&:blank?).join(","))
     else
-      klass.includes(:user_stat).order(order.reject(&:blank?).join(","))
+      klass.includes(:user_stat, :user_second_factors)
+        .order(order.reject(&:blank?).join(","))
     end
   end
 
@@ -98,19 +99,8 @@ class AdminUserIndexQuery
     when 'suspended'  then @query.suspended
     when 'pending'    then @query.not_suspended.where(approved: false, active: true)
     when 'suspect'    then suspect_users
+    when 'staged'     then @query.where(staged: true)
     end
-  end
-
-  def filter_by_user_with_bypass(filter)
-    if filter =~ /.+@.+/
-      # probably an email so try the bypass
-      user_id = UserEmail.where(email: filter.downcase).pluck(:user_id).first
-      if user_id
-        return @query.where('users.id = ?', user_id)
-      end
-    end
-
-    @query.where('username_lower ILIKE :filter OR user_emails.email ILIKE :filter', filter: "%#{params[:filter]}%")
   end
 
   def filter_by_search
@@ -124,7 +114,7 @@ class AdminUserIndexQuery
       if ip = IPAddr.new(filter) rescue nil
         @query.where('ip_address <<= :ip OR registration_ip_address <<= :ip', ip: ip.to_cidr_s)
       else
-        filter_by_user_with_bypass(filter)
+        @query.filter_by_username_or_email(filter)
       end
     end
   end

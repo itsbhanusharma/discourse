@@ -104,9 +104,39 @@ describe NewPostManager do
       end
     end
 
+    context 'with a high approval post count and secure category' do
+      it 'does not create topic' do
+        SiteSetting.approve_post_count = 100
+        user = Fabricate(:user)
+        category_group = Fabricate(:category_group, permission_type: 2)
+        group_user = Fabricate(:group_user, group: category_group.group, user_id: user.id)
+
+        manager = NewPostManager.new(
+          user,
+          raw: 'this is a new topic',
+          title: "Let's start a new topic!",
+          category: category_group.category_id
+        )
+
+        expect(manager.perform.errors["base"][0]).to eq(I18n.t("js.errors.reasons.forbidden"))
+      end
+    end
+
     context 'with a high trust level setting' do
       before do
         SiteSetting.approve_unless_trust_level = 4
+      end
+      it "will return an enqueue result" do
+        result = NewPostManager.default_handler(manager)
+        expect(NewPostManager.queue_enabled?).to eq(true)
+        expect(result.action).to eq(:enqueued)
+      end
+    end
+
+    context 'with staged moderation setting enabled' do
+      before do
+        SiteSetting.approve_unless_staged = true
+        topic.user.staged = true
       end
       it "will return an enqueue result" do
         result = NewPostManager.default_handler(manager)
@@ -269,4 +299,51 @@ describe NewPostManager do
     end
   end
 
+  context 'when posting in the category requires approval' do
+    let(:user) { Fabricate(:user) }
+    let(:category) { Fabricate(:category) }
+
+    context 'when new topics require approval' do
+      before do
+        category.custom_fields[Category::REQUIRE_TOPIC_APPROVAL] = true
+        category.save
+      end
+
+      it 'enqueues new topics' do
+        manager = NewPostManager.new(
+          user,
+          raw: 'this is a new topic',
+          title: "Let's start a new topic!",
+          category: category.id
+        )
+
+        expect(manager.perform.action).to eq(:enqueued)
+      end
+    end
+
+    context 'when new posts require approval' do
+      let(:topic) { Fabricate(:topic, category: category) }
+
+      before do
+        category.custom_fields[Category::REQUIRE_REPLY_APPROVAL] = true
+        category.save
+      end
+
+      it 'enqueues new posts' do
+        manager = NewPostManager.new(user, raw: 'this is a new post', topic_id: topic.id)
+        expect(manager.perform.action).to eq(:enqueued)
+      end
+
+      it "doesn't blow up with invalid topic_id" do
+        expect do
+          manager = NewPostManager.new(
+            user,
+            raw: 'this is a new topic',
+            topic_id: 97546
+          )
+          expect(manager.perform.action).to eq(:create_post)
+        end.not_to raise_error
+      end
+    end
+  end
 end

@@ -1,14 +1,16 @@
 import computed from "ember-addons/ember-computed-decorators";
 import UploadMixin from "discourse/mixins/upload";
 
-export default Em.Component.extend(UploadMixin, {
+export default Ember.Component.extend(UploadMixin, {
   type: "avatar",
   tagName: "span",
   imageIsNotASquare: false,
 
   @computed("uploading")
   uploadButtonText(uploading) {
-    return uploading ? I18n.t("uploading") : I18n.t("user.change_avatar.upload_picture");
+    return uploading
+      ? I18n.t("uploading")
+      : I18n.t("user.change_avatar.upload_picture");
   },
 
   validateUploadedFilesOptions() {
@@ -19,10 +21,10 @@ export default Em.Component.extend(UploadMixin, {
     this.setProperties({
       imageIsNotASquare: upload.width !== upload.height,
       uploadedAvatarTemplate: upload.url,
-      uploadedAvatarId: upload.id,
+      uploadedAvatarId: upload.id
     });
 
-    this.sendAction("done");
+    this.done();
   },
 
   @computed("user_id")

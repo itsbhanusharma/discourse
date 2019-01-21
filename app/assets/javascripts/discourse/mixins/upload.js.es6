@@ -1,22 +1,48 @@
-import { displayErrorForUpload, validateUploadedFiles } from 'discourse/lib/utilities';
+import {
+  displayErrorForUpload,
+  validateUploadedFiles
+} from "discourse/lib/utilities";
+import getUrl from "discourse-common/lib/get-url";
 
-export default Em.Mixin.create({
+export default Ember.Mixin.create({
   uploading: false,
   uploadProgress: 0,
 
   uploadDone() {
-    Em.warn("You should implement `uploadDone`");
+    Ember.warn("You should implement `uploadDone`", {
+      id: "discourse.upload.missing-upload-done"
+    });
   },
 
   validateUploadedFilesOptions() {
     return {};
   },
 
+  calculateUploadUrl() {
+    return (
+      getUrl(this.getWithDefault("uploadUrl", "/uploads")) +
+      ".json?client_id=" +
+      (this.messageBus && this.messageBus.clientId) +
+      "&authenticity_token=" +
+      encodeURIComponent(Discourse.Session.currentProp("csrfToken")) +
+      this.uploadUrlParams
+    );
+  },
+
+  uploadUrlParams: "",
+
+  uploadOptions() {
+    return {};
+  },
+
   _initialize: function() {
-    const $upload = this.$(),
-          csrf = Discourse.Session.currentProp("csrfToken"),
-          uploadUrl = Discourse.getURL(this.getWithDefault("uploadUrl", "/uploads")),
-          reset = () => this.setProperties({ uploading: false, uploadProgress: 0});
+    const $upload = this.$();
+    const reset = () =>
+      this.setProperties({ uploading: false, uploadProgress: 0 });
+    const maxFiles = this.getWithDefault(
+      "maxFiles",
+      this.siteSettings.simultaneous_uploads
+    );
 
     $upload.on("fileuploaddone", (e, data) => {
       let upload = data.result;
@@ -24,16 +50,26 @@ export default Em.Mixin.create({
       reset();
     });
 
-    $upload.fileupload({
-      url: uploadUrl + ".json?client_id=" + this.messageBus.clientId + "&authenticity_token=" + encodeURIComponent(csrf),
-      dataType: "json",
-      dropZone: $upload,
-      pasteZone: $upload
-    });
+    $upload.fileupload(
+      _.merge(
+        {
+          url: this.calculateUploadUrl(),
+          dataType: "json",
+          replaceFileInput: false,
+          dropZone: $upload,
+          pasteZone: $upload
+        },
+        this.uploadOptions()
+      )
+    );
 
     $upload.on("fileuploaddrop", (e, data) => {
-      if (data.files.length > 10) {
-        bootbox.alert(I18n.t("post.errors.too_many_dragged_and_dropped_files"));
+      if (maxFiles > 0 && data.files.length > maxFiles) {
+        bootbox.alert(
+          I18n.t("post.errors.too_many_dragged_and_dropped_files", {
+            max: maxFiles
+          })
+        );
         return false;
       } else {
         return true;
@@ -41,31 +77,44 @@ export default Em.Mixin.create({
     });
 
     $upload.on("fileuploadsubmit", (e, data) => {
-      const opts = _.merge({ bypassNewUserRestriction: true }, this.validateUploadedFilesOptions());
+      const opts = _.merge(
+        { bypassNewUserRestriction: true },
+        this.validateUploadedFilesOptions()
+      );
       const isValid = validateUploadedFiles(data.files, opts);
-      let form = { type: this.get("type") };
-      if (this.get("data")) { form = $.extend(form, this.get("data")); }
+      const type = this.get("type");
+      let form = type ? { type } : {};
+      if (this.get("data")) {
+        form = $.extend(form, this.get("data"));
+      }
       data.formData = form;
       this.setProperties({ uploadProgress: 0, uploading: isValid });
       return isValid;
     });
 
     $upload.on("fileuploadprogressall", (e, data) => {
-      const progress = parseInt(data.loaded / data.total * 100, 10);
+      const progress = parseInt((data.loaded / data.total) * 100, 10);
       this.set("uploadProgress", progress);
     });
 
     $upload.on("fileuploadfail", (e, data) => {
-      displayErrorForUpload(data.jqXHR.responseJSON);
+      if (!data || (data && data.errorThrown !== "abort")) {
+        displayErrorForUpload(data);
+      }
       reset();
     });
   }.on("didInsertElement"),
 
   _destroy: function() {
-    this.messageBus.unsubscribe("/uploads/" + this.get("type"));
+    this.messageBus &&
+      this.messageBus.unsubscribe("/uploads/" + this.get("type"));
+
     const $upload = this.$();
-    try { $upload.fileupload("destroy"); }
-    catch (e) { /* wasn't initialized yet */ }
+    try {
+      $upload.fileupload("destroy");
+    } catch (e) {
+      /* wasn't initialized yet */
+    }
     $upload.off();
   }.on("willDestroyElement")
 });

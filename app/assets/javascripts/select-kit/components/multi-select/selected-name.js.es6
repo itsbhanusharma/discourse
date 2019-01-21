@@ -3,8 +3,10 @@ import computed from "ember-addons/ember-computed-decorators";
 export default Ember.Component.extend({
   attributeBindings: [
     "tabindex",
-    "content.name:data-name",
-    "content.value:data-value",
+    "ariaLabel:aria-label",
+    "title",
+    "name:data-name",
+    "value:data-value",
     "guid:data-guid"
   ],
   classNames: ["selected-name", "choice"],
@@ -13,16 +15,39 @@ export default Ember.Component.extend({
   tagName: "span",
   tabindex: -1,
 
-  @computed("content")
-  guid(content) { return Ember.guidFor(content); },
+  @computed("computedContent")
+  guid(computedContent) {
+    return Ember.guidFor(computedContent);
+  },
 
-  isLocked: Ember.computed("content.locked", function() {
-    return this.getWithDefault("content.locked", false);
+  ariaLabel: Ember.computed.or("computedContent.ariaLabel", "title"),
+
+  @computed("computedContent.title", "name")
+  title(computedContentTitle, name) {
+    if (computedContentTitle) return computedContentTitle;
+    if (name) return name;
+
+    return null;
+  },
+
+  label: Ember.computed.or("computedContent.label", "title", "name"),
+
+  name: Ember.computed.alias("computedContent.name"),
+
+  value: Ember.computed.alias("computedContent.value"),
+
+  isLocked: Ember.computed("computedContent.locked", function() {
+    return this.getWithDefault("computedContent.locked", false);
   }),
 
+  @computed("computedContent", "highlightedSelection.[]")
+  isHighlighted(computedContent, highlightedSelection) {
+    return highlightedSelection.includes(this.get("computedContent"));
+  },
+
   click() {
-    if (this.get("isLocked") === true) { return false; }
-    this.toggleProperty("isHighlighted");
+    if (this.get("isLocked")) return false;
+    this.onClickSelectionItem([this.get("computedContent")]);
     return false;
   }
 });

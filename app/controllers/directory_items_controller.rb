@@ -7,8 +7,17 @@ class DirectoryItemsController < ApplicationController
     period = params.require(:period)
     period_type = DirectoryItem.period_types[period.to_sym]
     raise Discourse::InvalidAccess.new(:period_type) unless period_type
-
     result = DirectoryItem.where(period_type: period_type).includes(:user)
+
+    if params[:group]
+      result = result.includes(user: :groups).where(users: { groups: { name: params[:group] } })
+    else
+      result = result.includes(user: :primary_group)
+    end
+
+    if params[:exclude_usernames]
+      result = result.references(:user).where.not(users: { username: params[:exclude_usernames].split(",") })
+    end
 
     order = params[:order] || DirectoryItem.headings.first
     if DirectoryItem.headings.include?(order.to_sym)

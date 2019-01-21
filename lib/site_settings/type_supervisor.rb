@@ -6,28 +6,33 @@ module SiteSettings; end
 class SiteSettings::TypeSupervisor
   include SiteSettings::Validations
 
-  CONSUMED_OPTS = %i[enum choices type validator min max regex hidden regex_error].freeze
+  CONSUMED_OPTS = %i[enum choices type validator min max regex hidden regex_error allow_any list_type].freeze
   VALIDATOR_OPTS = %i[min max regex hidden regex_error].freeze
 
   # For plugins, so they can tell if a feature is supported
   SUPPORTED_TYPES = %i[email username list enum].freeze
 
   def self.types
-    @types ||= Enum.new(string: 1,
-                        time: 2,
-                        integer: 3,
-                        float: 4,
-                        bool: 5,
-                        null: 6,
-                        enum: 7,
-                        list: 8,
-                        url_list: 9,
-                        host_list: 10,
-                        category_list: 11,
-                        value_list: 12,
-                        regex: 13,
-                        email: 14,
-                        username: 15)
+    @types ||= Enum.new(
+      string: 1,
+      time: 2,
+      integer: 3,
+      float: 4,
+      bool: 5,
+      null: 6,
+      enum: 7,
+      list: 8,
+      url_list: 9,
+      host_list: 10,
+      category_list: 11,
+      value_list: 12,
+      regex: 13,
+      email: 14,
+      username: 15,
+      category: 16,
+      uploaded_image_list: 17,
+      upload: 18,
+    )
   end
 
   def self.parse_value_type(val)
@@ -58,6 +63,8 @@ class SiteSettings::TypeSupervisor
     @choices = {}
     @validators = {}
     @types = {}
+    @allow_any = {}
+    @list_type = {}
   end
 
   def load_setting(name_arg, opts = {})
@@ -80,6 +87,11 @@ class SiteSettings::TypeSupervisor
 
     if (type = opts[:type])
       @static_types[name] = type.to_sym
+
+      if type.to_sym == :list
+        @allow_any[name] = opts[:allow_any] == false ? false : true
+        @list_type[name] = opts[:list_type] if opts[:list_type]
+      end
     end
     @types[name] = get_data_type(name, @defaults_provider[name])
 
@@ -91,7 +103,8 @@ class SiteSettings::TypeSupervisor
 
   def to_rb_value(name, value, override_type = nil)
     name = name.to_sym
-    type = @types[name] = (override_type || @types[name] || get_data_type(name, value))
+    @types[name] = (@types[name] || get_data_type(name, value))
+    type = (override_type || @types[name])
 
     case type
     when self.class.types[:float]
@@ -121,7 +134,7 @@ class SiteSettings::TypeSupervisor
 
   def type_hash(name)
     name = name.to_sym
-    type = self.class.types[@types[name]]
+    type = get_type(name)
 
     result = { type: type.to_s }
 
@@ -134,7 +147,12 @@ class SiteSettings::TypeSupervisor
     end
 
     result[:choices] = @choices[name] if @choices.has_key? name
+    result[:list_type] = @list_type[name] if @list_type.has_key? name
     result
+  end
+
+  def get_type(name)
+    self.class.types[@types[name.to_sym]]
   end
 
   private
@@ -151,6 +169,8 @@ class SiteSettings::TypeSupervisor
       type = get_data_type(name, val)
     elsif type == self.class.types[:enum]
       val = @defaults_provider[name].is_a?(Integer) ? val.to_i : val.to_s
+    elsif type == self.class.types[:upload] && val.present?
+      val = val.id
     end
 
     [val, type]
@@ -161,7 +181,21 @@ class SiteSettings::TypeSupervisor
       if enum_class(name)
         raise Discourse::InvalidParameters.new(:value) unless enum_class(name).valid_value?(val)
       else
-        raise Discourse::InvalidParameters.new(:value) unless @choices[name].include?(val)
+        unless (choice = @choices[name])
+          raise Discourse::InvalidParameters.new(name)
+        end
+
+        raise Discourse::InvalidParameters.new(:value) unless choice.include?(val)
+      end
+    end
+
+    if type == self.class.types[:list] || type == self.class.types[:string]
+      if @allow_any.key?(name) && !@allow_any[name]
+        split = val.to_s.split("|")
+        diff = (split - @choices[name])
+        if diff.length > 0
+          raise Discourse::InvalidParameters.new(I18n.t('errors.site_settings.invalid_choice', name: diff.join(','), count: diff.length))
+        end
       end
     end
 

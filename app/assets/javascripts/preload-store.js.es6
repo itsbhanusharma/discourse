@@ -19,7 +19,7 @@ export default {
   **/
   getAndRemove(key, finder) {
     if (this.data[key]) {
-      var promise = Em.RSVP.resolve(this.data[key]);
+      var promise = Ember.RSVP.resolve(this.data[key]);
       delete this.data[key];
       return promise;
     }
@@ -30,7 +30,9 @@ export default {
 
         // If the finder returns a promise, we support that too
         if (result && result.then) {
-          result.then(toResolve => resolve(toResolve)).catch(toReject => reject(toReject));
+          result
+            .then(toResolve => resolve(toResolve))
+            .catch(toReject => reject(toReject));
         } else {
           resolve(result);
         }

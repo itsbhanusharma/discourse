@@ -15,6 +15,9 @@ describe AdminDashboardData do
 
       AdminDashboardData.fetch_problems
       expect(called).to eq(true)
+
+      AdminDashboardData.fetch_problems(check_force_https: true)
+      expect(called).to eq(true)
     end
 
     it 'calls the passed method' do
@@ -189,6 +192,52 @@ describe AdminDashboardData do
     end
   end
 
+  describe 'pwa_config_check' do
+    subject { described_class.new.pwa_config_check }
+
+    it 'alerts for large_icon missing' do
+      SiteSetting.large_icon = nil
+      expect(subject).to eq(I18n.t('dashboard.pwa_config_icon_warning', base_path: Discourse.base_path))
+    end
+
+    it 'alerts for incompatible large_icon' do
+      upload = UploadCreator.new(
+        file_from_fixtures('large_icon_incorrect.png'),
+        'large_icon',
+        for_site_setting: true
+      ).create_for(Discourse.system_user.id)
+      SiteSetting.large_icon = upload
+      expect(subject).to eq(I18n.t('dashboard.pwa_config_icon_warning', base_path: Discourse.base_path))
+    end
+
+    context 'when large_icon is correct' do
+      before do
+        upload = UploadCreator.new(
+          file_from_fixtures('large_icon_correct.png'),
+          'large_icon',
+          for_site_setting: true
+        ).create_for(Discourse.system_user.id)
+        SiteSetting.large_icon = upload
+      end
+
+      it 'alerts for short_title missing' do
+        SiteSetting.short_title = nil
+        expect(subject).to eq(I18n.t('dashboard.pwa_config_title_warning', base_path: Discourse.base_path))
+      end
+
+      it 'returns nil when everything is ok' do
+        upload = UploadCreator.new(
+          file_from_fixtures('large_icon_correct.png'),
+          'large_icon',
+          for_site_setting: true
+        ).create_for(Discourse.system_user.id)
+        SiteSetting.large_icon = upload
+        SiteSetting.short_title = 'title'
+        expect(subject).to be_nil
+      end
+    end
+  end
+
   describe 's3_config_check' do
     shared_examples 'problem detection for s3-dependent setting' do
       subject { described_class.new.s3_config_check }
@@ -207,9 +256,9 @@ describe AdminDashboardData do
       end
 
       context 'when setting is enabled' do
-        let(:setting_enabled) { true }
         before do
-          SiteSetting.public_send("#{setting_key}=", setting_enabled)
+          all_setting_keys.each { |key| SiteSetting.public_send("#{key}=", 'foo') }
+          SiteSetting.public_send("#{setting[:key]}=", setting[:enabled_value])
           SiteSetting.public_send("#{bucket_key}=", bucket_value)
         end
 
@@ -226,7 +275,7 @@ describe AdminDashboardData do
         context 'when bucket is filled in' do
           let(:bucket_value) { 'a' }
           before do
-            SiteSetting.public_send("s3_use_iam_profile=", use_iam_profile)
+            SiteSetting.s3_use_iam_profile = use_iam_profile
           end
 
           context 'when using iam profile' do
@@ -257,7 +306,7 @@ describe AdminDashboardData do
 
       context 'when setting is not enabled' do
         before do
-          SiteSetting.public_send("#{setting_key}=", false)
+          SiteSetting.public_send("#{setting[:key]}=", setting[:disabled_value])
         end
 
         it "always returns nil" do
@@ -269,15 +318,53 @@ describe AdminDashboardData do
     end
 
     describe 'uploads' do
-      let(:setting_key) { :enable_s3_uploads }
+      let(:setting) do
+        {
+          key: :enable_s3_uploads,
+          enabled_value: true,
+          disabled_value: false
+        }
+      end
       let(:bucket_key) { :s3_upload_bucket }
       include_examples 'problem detection for s3-dependent setting'
     end
 
     describe 'backups' do
-      let(:setting_key) { :enable_s3_backups }
+      let(:setting) do
+        {
+          key: :backup_location,
+          enabled_value: BackupLocationSiteSetting::S3,
+          disabled_value: BackupLocationSiteSetting::LOCAL
+        }
+      end
       let(:bucket_key) { :s3_backup_bucket }
       include_examples 'problem detection for s3-dependent setting'
+    end
+  end
+
+  describe 'force_https_check' do
+    subject { described_class.new(check_force_https: true).force_https_check }
+
+    it 'returns nil if force_https site setting enabled' do
+      SiteSetting.force_https = true
+      expect(subject).to be_nil
+    end
+
+    it 'returns nil if force_https site setting not enabled' do
+      SiteSetting.force_https = false
+      expect(subject).to eq(I18n.t('dashboard.force_https_warning', base_path: Discourse.base_path))
+    end
+  end
+
+  describe 'ignore force_https_check' do
+    subject { described_class.new(check_force_https: false).force_https_check }
+
+    it 'returns nil' do
+      SiteSetting.force_https = true
+      expect(subject).to be_nil
+
+      SiteSetting.force_https = false
+      expect(subject).to be_nil
     end
   end
 
@@ -298,13 +385,43 @@ describe AdminDashboardData do
 
     it 'returns a message if it was added' do
       described_class.add_problem_message(key)
-      expect(described_class.problem_message_check(key)).to eq(I18n.t(key))
+      expect(described_class.problem_message_check(key)).to eq(I18n.t(key, base_path: Discourse.base_path))
     end
 
     it 'returns a message if it was added with an expiry' do
       described_class.add_problem_message(key, 300)
-      expect(described_class.problem_message_check(key)).to eq(I18n.t(key))
+      expect(described_class.problem_message_check(key)).to eq(I18n.t(key, base_path: Discourse.base_path))
     end
   end
 
+  describe '#out_of_date_themes' do
+    let(:remote) { RemoteTheme.create!(remote_url: "https://github.com/org/testtheme") }
+    let!(:theme) { Fabricate(:theme, remote_theme: remote, name: "Test< Theme") }
+
+    it "outputs correctly formatted html" do
+      remote.update!(local_version: "old version", remote_version: "new version", commits_behind: 2)
+      dashboard_data = described_class.new
+      expect(dashboard_data.out_of_date_themes).to eq(
+        I18n.t("dashboard.out_of_date_themes") + "<ul><li><a href=\"/admin/customize/themes/#{theme.id}\">Test&lt; Theme</a></li></ul>"
+      )
+
+      remote.update!(local_version: "new version", commits_behind: 0)
+      expect(dashboard_data.out_of_date_themes).to eq(nil)
+    end
+  end
+
+  describe '#unreachable_themes' do
+    let(:remote) { RemoteTheme.create!(remote_url: "https://github.com/org/testtheme", last_error_text: "can't reach repo :'(") }
+    let!(:theme) { Fabricate(:theme, remote_theme: remote, name: "Test< Theme") }
+
+    it "outputs correctly formatted html" do
+      dashboard_data = described_class.new
+      expect(dashboard_data.unreachable_themes).to eq(
+        I18n.t("dashboard.unreachable_themes") + "<ul><li><a href=\"/admin/customize/themes/#{theme.id}\">Test&lt; Theme</a></li></ul>"
+      )
+
+      remote.update!(last_error_text: nil)
+      expect(dashboard_data.out_of_date_themes).to eq(nil)
+    end
+  end
 end

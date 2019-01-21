@@ -5,6 +5,66 @@ describe Group do
   let(:user) { Fabricate(:user) }
   let(:group) { Fabricate(:group) }
 
+  context 'validations' do
+    describe '#grant_trust_level' do
+      describe 'when trust level is not valid' do
+        it 'should not be valid' do
+          group.grant_trust_level = 123456
+
+          expect(group.valid?).to eq(false)
+
+          expect(group.errors.full_messages.join(",")).to eq(I18n.t(
+            'groups.errors.grant_trust_level_not_valid',
+            trust_level: 123456
+          ))
+        end
+      end
+    end
+
+    describe '#name' do
+      context 'when a user with a similar name exists' do
+        it 'should not be valid' do
+          new_group = Fabricate.build(:group, name: admin.username.upcase)
+
+          expect(new_group).to_not be_valid
+
+          expect(new_group.errors.full_messages.first)
+            .to include(I18n.t("activerecord.errors.messages.taken"))
+        end
+      end
+
+      context 'when a group with a similar name exists' do
+        it 'should not be valid' do
+          new_group = Fabricate.build(:group, name: group.name.upcase)
+
+          expect(new_group).to_not be_valid
+
+          expect(new_group.errors.full_messages.first)
+            .to include(I18n.t("activerecord.errors.messages.taken"))
+        end
+      end
+    end
+  end
+
+  describe "#posts_for" do
+    it "returns the post in the group" do
+      p = Fabricate(:post)
+      group.add(p.user)
+
+      posts = group.posts_for(Guardian.new)
+      expect(posts).to include(p)
+    end
+
+    it "doesn't include unlisted posts" do
+      p = Fabricate(:post)
+      p.topic.update_column(:visible, false)
+      group.add(p.user)
+
+      posts = group.posts_for(Guardian.new)
+      expect(posts).not_to include(p)
+    end
+  end
+
   describe '#builtin' do
     context "verify enum sequence" do
       before do
@@ -134,76 +194,44 @@ describe Group do
     Group[:staff].user_ids.reject { |id| id < 0 }
   end
 
-  it "Correctly handles primary groups" do
-    group = Fabricate(:group, primary_group: true)
-    user = Fabricate(:user)
+  describe '#primary_group=' do
+    it "updates all members' #primary_group" do
+      group.add(user)
 
-    group.add(user)
-
-    user.reload
-    expect(user.primary_group_id).to eq group.id
-
-    group.remove(user)
-
-    user.reload
-    expect(user.primary_group_id).to eq nil
-
-    group.add(user)
-    group.primary_group = false
-    group.save
-
-    user.reload
-    expect(user.primary_group_id).to eq nil
-
+      expect { group.update(primary_group: true) }.to change { user.reload.primary_group }.from(nil).to(group)
+      expect { group.update(primary_group: false) }.to change { user.reload.primary_group }.from(group).to(nil)
+    end
   end
 
-  it "Correctly handles title" do
+  describe '#title=' do
+    it "updates the member's title only if it was blank or exact match" do
+      group.add(user)
 
-    group = Fabricate(:group, title: 'Super Awesome')
-    user = Fabricate(:user)
+      expect { group.update(title: 'Awesome') }.to change { user.reload.title }.from(nil).to('Awesome')
+      expect { group.update(title: 'Super') }.to change { user.reload.title }.from('Awesome').to('Super')
 
-    expect(user.title).to eq nil
+      user.update(title: 'Differently Awesome')
+      expect { group.update(title: 'Awesome') }.to_not change { user.reload.title }
+    end
 
-    group.add(user)
-    user.reload
-
-    expect(user.title).to eq 'Super Awesome'
-
-    group.title = 'BOOM'
-    group.save
-
-    user.reload
-    expect(user.title).to eq 'BOOM'
-
-    group.title = nil
-    group.save
-
-    user.reload
-    expect(user.title).to eq nil
-
-    group.title = "BOB"
-    group.save
-
-    user.reload
-    expect(user.title).to eq "BOB"
-
-    group.remove(user)
-
-    user.reload
-    expect(user.title).to eq nil
-
-    group.add(user)
-    group.destroy
-
-    user.reload
-    expect(user.title).to eq nil
-
+    it "doesn't update non-member's title" do
+      user.update(title: group.title)
+      expect { group.update(title: 'Super') }.to_not change { user.reload.title }
+    end
   end
 
   describe '.refresh_automatic_group!' do
     it "makes sure the everyone group is not visible" do
       g = Group.refresh_automatic_group!(:everyone)
       expect(g.visibility_level).to eq(Group.visibility_levels[:owners])
+    end
+
+    it "ensures that the moderators group is messageable by all" do
+      group = Group.find(Group::AUTO_GROUPS[:moderators])
+      group.update!(messageable_level: Group::ALIAS_LEVELS[:nobody])
+      Group.refresh_automatic_group!(:moderators)
+
+      expect(group.reload.messageable_level).to eq(Group::ALIAS_LEVELS[:everyone])
     end
 
     it "does not reset the localized name" do
@@ -247,7 +275,7 @@ describe Group do
         default_locale = SiteSetting.default_locale
         I18n.locale = SiteSetting.default_locale = 'de'
 
-        another_group = Fabricate(:group,
+        _another_group = Fabricate(:group,
           name: I18n.t('groups.default_names.staff').upcase
         )
 
@@ -312,6 +340,17 @@ describe Group do
     admin.revoke_moderation!
     expect(real_admins).to be_empty
     expect(real_staff).to eq []
+
+    # we need some ninja work to set min username to 6
+
+    User.where('length(username) < 6').each do |u|
+      u.username = u.username + "ZZZZZZ"
+      u.save!
+    end
+
+    SiteSetting.min_username_length = 6
+    Group.refresh_automatic_groups!(:staff)
+    # should not explode here
   end
 
   it "Correctly updates automatic trust level groups" do
@@ -330,7 +369,7 @@ describe Group do
     user2 = Fabricate(:coding_horror)
     user2.change_trust_level!(TrustLevel[3])
 
-    expect(Group[:trust_level_2].user_ids.sort.reject { |id| id < -1 }).to eq [-1, user.id, user2.id].sort
+    expect(Group[:trust_level_2].user_ids).to include(user.id, user2.id)
   end
 
   it "Correctly updates all automatic groups upon request" do
@@ -338,7 +377,7 @@ describe Group do
     user = Fabricate(:user)
     user.change_trust_level!(TrustLevel[2])
 
-    Group.exec_sql("update groups set user_count=0 where id = #{Group::AUTO_GROUPS[:trust_level_2]}")
+    DB.exec("UPDATE groups SET user_count = 0 WHERE id = #{Group::AUTO_GROUPS[:trust_level_2]}")
 
     Group.refresh_automatic_groups!
 
@@ -346,23 +385,20 @@ describe Group do
     expect(groups.count).to eq Group::AUTO_GROUPS.count
 
     g = groups.find { |grp| grp.id == Group::AUTO_GROUPS[:admins] }
-    expect(g.users.count).to eq(g.user_count)
-    expect(g.users.pluck(:id).sort.reject { |id| id < -1 }).to eq([-1, admin.id])
+    expect(g.users.count).to eq g.user_count
+    expect(g.users.pluck(:id)).to contain_exactly(admin.id)
 
     g = groups.find { |grp| grp.id == Group::AUTO_GROUPS[:staff] }
-    expect(g.users.count).to eq (g.user_count)
-    expect(g.users.pluck(:id).sort.reject { |id| id < -1 }).to eq([-1, admin.id])
+    expect(g.users.count).to eq g.user_count
+    expect(g.users.pluck(:id)).to contain_exactly(admin.id)
 
     g = groups.find { |grp| grp.id == Group::AUTO_GROUPS[:trust_level_1] }
-    # admin, system and user
     expect(g.users.count).to eq g.user_count
-    expect(g.users.where('users.id > -2').count).to eq 3
+    expect(g.users.pluck(:id)).to contain_exactly(admin.id, user.id)
 
     g = groups.find { |grp| grp.id == Group::AUTO_GROUPS[:trust_level_2] }
-    # system and user
     expect(g.users.count).to eq g.user_count
-    expect(g.users.where('users.id > -2').count).to eq 2
-
+    expect(g.users.pluck(:id)).to contain_exactly(user.id)
   end
 
   it "can set members via usernames helper" do
@@ -387,17 +423,60 @@ describe Group do
     expect(g.usernames.split(",").sort).to eq usernames.split(",").sort
   end
 
-  it "correctly destroys groups" do
+  describe 'new' do
+    subject { Fabricate.build(:group) }
 
-    g = Fabricate(:group)
-    u1 = Fabricate(:user)
-    g.add(u1)
-    g.save!
+    it 'triggers a extensibility event' do
+      event = DiscourseEvent.track_events { subject.save! }.first
 
-    g.destroy
+      expect(event[:event_name]).to eq(:group_created)
+      expect(event[:params].first).to eq(subject)
+    end
+  end
 
-    expect(User.where(id: u1.id).count).to eq 1
-    expect(GroupUser.where(group_id: g.id).count).to eq 0
+  describe 'destroy' do
+    let(:user) { Fabricate(:user) }
+    let(:group) { Fabricate(:group, users: [user]) }
+
+    before do
+      group.add(user)
+    end
+
+    it "it deleted correctly" do
+      group.destroy!
+      expect(User.where(id: user.id).count).to eq 1
+      expect(GroupUser.where(group_id: group.id).count).to eq 0
+    end
+
+    it 'triggers a extensibility event' do
+      event = DiscourseEvent.track_events { group.destroy! }.first
+
+      expect(event[:event_name]).to eq(:group_destroyed)
+      expect(event[:params].first).to eq(group)
+    end
+
+    it "strips the user's title and unsets the user's primary group when exact match" do
+      group.update(title: 'Awesome')
+      user.update(primary_group: group)
+
+      group.destroy!
+
+      user.reload
+      expect(user.title).to eq(nil)
+      expect(user.primary_group).to eq(nil)
+    end
+
+    it "does not strip title or unset primary group when not exact match" do
+      primary_group = Fabricate(:group, primary_group: true, title: 'Different')
+      primary_group.add(user)
+      group.update(title: 'Awesome')
+
+      group.destroy!
+
+      user.reload
+      expect(user.title).to eq('Different')
+      expect(user.primary_group).to eq(primary_group)
+    end
   end
 
   it "has custom fields" do
@@ -456,77 +535,83 @@ describe Group do
     end
   end
 
-  it "correctly grants a trust level to members" do
-    group = Fabricate(:group, grant_trust_level: 2)
-    u0 = Fabricate(:user, trust_level: 0)
-    u3 = Fabricate(:user, trust_level: 3)
+  describe 'trust level management' do
+    it "correctly grants a trust level to members" do
+      group = Fabricate(:group, grant_trust_level: 2)
+      u0 = Fabricate(:user, trust_level: 0)
+      u3 = Fabricate(:user, trust_level: 3)
 
-    group.add(u0)
-    expect(u0.reload.trust_level).to eq(2)
+      group.add(u0)
+      expect(u0.reload.trust_level).to eq(2)
 
-    group.add(u3)
-    expect(u3.reload.trust_level).to eq(3)
-  end
-
-  describe "group_removes_trust_level" do
-
-    context "set to false" do
-      before do
-        SiteSetting.group_removes_trust_level = false
-      end
-
-      it "maintains the chosen trust level" do
-        g0 = Fabricate(:group, grant_trust_level: 2)
-        g1 = Fabricate(:group, grant_trust_level: 3)
-        user = Fabricate(:user, trust_level: 0)
-
-        g0.add(user)
-        expect(user.reload.trust_level).to eq(2)
-
-        g1.add(user)
-        expect(user.reload.trust_level).to eq(3)
-
-        g1.remove(user)
-        expect(user.reload.trust_level).to eq(3)
-
-        g0.remove(user)
-        expect(user.reload.trust_level).to eq(3)
-      end
+      group.add(u3)
+      expect(u3.reload.trust_level).to eq(3)
     end
 
-    context "set to true" do
-      before do
-        SiteSetting.group_removes_trust_level = true
+    describe 'when a user has qualified for trust level 1' do
+      let(:user) do
+        Fabricate(:user,
+          trust_level: 1,
+          created_at: Time.zone.now - 10.years
+        )
       end
 
-      it "adjusts the user trust level" do
-        g0 = Fabricate(:group, grant_trust_level: 2)
-        g1 = Fabricate(:group, grant_trust_level: 3)
-        g2 = Fabricate(:group)
+      let(:group) { Fabricate(:group, grant_trust_level: 1) }
+      let(:group2) { Fabricate(:group, grant_trust_level: 0) }
 
-        # Add a group without one to consider `NULL` check
-        g2.add(user)
+      before do
+        user.user_stat.update!(
+          topics_entered: 999,
+          posts_read_count: 999,
+          time_read: 999
+        )
+      end
 
-        user = Fabricate(:user, trust_level: 0)
+      it "should not demote the user" do
+        group.add(user)
+        group2.add(user)
 
-        g0.add(user)
-        expect(user.reload.trust_level).to eq(2)
-        expect(user.trust_level_locked?).to eq(true)
+        expect(user.reload.trust_level).to eq(1)
 
-        g1.add(user)
-        expect(user.reload.trust_level).to eq(3)
-        expect(user.trust_level_locked?).to eq(true)
+        group.remove(user)
 
-        g1.remove(user)
-        expect(user.reload.trust_level).to eq(2)
-        expect(user.trust_level_locked?).to eq(true)
-
-        g0.remove(user)
         expect(user.reload.trust_level).to eq(0)
-        expect(user.trust_level_locked?).to eq(false)
       end
     end
 
+    it "adjusts the user trust level" do
+      g0 = Fabricate(:group, grant_trust_level: 2)
+      g1 = Fabricate(:group, grant_trust_level: 3)
+      g2 = Fabricate(:group)
+
+      user = Fabricate(:user, trust_level: 0)
+
+      # Add a group without one to consider `NULL` check
+      g2.add(user)
+      expect(user.group_granted_trust_level).to be_nil
+      expect(user.manual_locked_trust_level).to be_nil
+
+      g0.add(user)
+      expect(user.reload.trust_level).to eq(2)
+      expect(user.group_granted_trust_level).to eq(2)
+      expect(user.manual_locked_trust_level).to be_nil
+
+      g1.add(user)
+      expect(user.reload.trust_level).to eq(3)
+      expect(user.group_granted_trust_level).to eq(3)
+      expect(user.manual_locked_trust_level).to be_nil
+
+      g1.remove(user)
+      expect(user.reload.trust_level).to eq(2)
+      expect(user.group_granted_trust_level).to eq(2)
+      expect(user.manual_locked_trust_level).to be_nil
+
+      g0.remove(user)
+      user.reload
+      expect(user.manual_locked_trust_level).to be_nil
+      expect(user.group_granted_trust_level).to be_nil
+      expect(user.trust_level).to eq(0)
+    end
   end
 
   it 'should cook the bio' do
@@ -587,14 +672,63 @@ describe Group do
 
   end
 
+  describe '#remove' do
+    before { group.add(user) }
+
+    context 'when stripping title' do
+      it "only strips user's title if exact match" do
+        group.update!(title: 'Awesome')
+        expect { group.remove(user) }.to change { user.reload.title }.from('Awesome').to(nil)
+
+        group.add(user)
+        user.update_columns(title: 'Different')
+        expect { group.remove(user) }.to_not change { user.reload.title }
+      end
+
+      it "grants another title when the user has other available titles" do
+        group.update!(title: 'Awesome')
+        Fabricate(:group, title: 'Super').add(user)
+
+        expect { group.remove(user) }.to change { user.reload.title }.from('Awesome').to('Super')
+      end
+    end
+
+    it "unsets the user's primary group" do
+      user.update(primary_group: group)
+      expect { group.remove(user) }.to change { user.reload.primary_group }.from(group).to(nil)
+    end
+  end
+
   describe '#add' do
+    it 'grants the title only if the new member does not have title' do
+      group.update(title: 'Awesome')
+      expect { group.add(user) }.to change { user.reload.title }.from(nil).to('Awesome')
+
+      group.remove(user)
+      user.update(title: 'Already Awesome')
+      expect { group.add(user) }.not_to change { user.reload.title }
+    end
+
+    it "always sets user's primary group" do
+      group.update(primary_group: true, title: 'AAAA')
+      expect { group.add(user) }.to change { user.reload.primary_group }.from(nil).to(group)
+
+      new_group = Fabricate(:group, primary_group: true, title: 'BBBB')
+
+      expect {
+        new_group.add(user)
+        user.reload
+      }.to change { user.primary_group }.from(group).to(new_group)
+        .and change { user.title }.from('AAAA').to('BBBB')
+    end
+
     context 'when adding a user into a public group' do
       let(:category) { Fabricate(:category) }
 
       it "should publish the group's categories to the client" do
         group.update!(public_admission: true, categories: [category])
 
-        message = MessageBus.track_publish { group.add(user) }.first
+        message = MessageBus.track_publish("/categories") { group.add(user) }.first
 
         expect(message.data[:categories].count).to eq(1)
         expect(message.data[:categories].first[:id]).to eq(category.id)
@@ -641,6 +775,13 @@ describe Group do
 
       expect(group.group_users.map(&:user_id)).to contain_exactly(user.id, admin.id)
     end
+
+    it 'updates group user count' do
+      expect {
+        group.bulk_add([user.id, admin.id])
+        group.reload
+      }.to change { group.user_count }.by(2)
+    end
   end
 
   it "Correctly updates has_messages" do
@@ -658,5 +799,48 @@ describe Group do
     Group.refresh_has_messages!
     group.reload
     expect(group.has_messages?).to eq true
+  end
+
+  describe '#automatic_group_membership' do
+    describe 'for a automatic_membership_retroactive group' do
+      let(:group) { Fabricate(:group, automatic_membership_retroactive: true) }
+
+      it "should be triggered on create and update" do
+        expect { group }
+          .to change { Jobs::AutomaticGroupMembership.jobs.size }.by(1)
+
+        job = Jobs::AutomaticGroupMembership.jobs.last
+
+        expect(job["args"].first["group_id"]).to eq(group.id)
+
+        Jobs::AutomaticGroupMembership.jobs.clear
+
+        expect do
+          group.update!(name: 'asdiaksjdias')
+        end.to change { Jobs::AutomaticGroupMembership.jobs.size }.by(1)
+
+        job = Jobs::AutomaticGroupMembership.jobs.last
+
+        expect(job["args"].first["group_id"]).to eq(group.id)
+      end
+    end
+  end
+
+  it "allows Font Awesome 4.7 syntax as group avatar flair" do
+    group = Fabricate(:group)
+    group.flair_url = "fa-air-freshener"
+    group.save
+
+    group = Group.find(group.id)
+    expect(group.flair_url).to eq("fa-air-freshener")
+  end
+
+  it "allows Font Awesome 5 syntax as group avatar flair" do
+    group = Fabricate(:group)
+    group.flair_url = "fab fa-bandcamp"
+    group.save
+
+    group = Group.find(group.id)
+    expect(group.flair_url).to eq("fab fa-bandcamp")
   end
 end

@@ -1,5 +1,4 @@
-import { ajax } from 'discourse/lib/ajax';
-import PreloadStore from 'preload-store';
+import { ajax } from "discourse/lib/ajax";
 
 const Backup = Discourse.Model.extend({
   destroy() {
@@ -16,12 +15,15 @@ const Backup = Discourse.Model.extend({
 
 Backup.reopenClass({
   find() {
-    return PreloadStore.getAndRemove("backups", () => ajax("/admin/backups.json"))
-                       .then(backups => backups.map(backup => Backup.create(backup)));
+    return ajax("/admin/backups.json").then(backups =>
+      backups.map(backup => Backup.create(backup))
+    );
   },
 
   start(withUploads) {
-    if (withUploads === undefined) { withUploads = true; }
+    if (withUploads === undefined) {
+      withUploads = true;
+    }
     return ajax("/admin/backups", {
       type: "POST",
       data: {
@@ -29,21 +31,25 @@ Backup.reopenClass({
         client_id: window.MessageBus.clientId
       }
     }).then(result => {
-      if (!result.success) { bootbox.alert(result.message); }
+      if (!result.success) {
+        bootbox.alert(result.message);
+      }
     });
   },
 
   cancel() {
     return ajax("/admin/backups/cancel.json", {
-      type: 'DELETE'
+      type: "DELETE"
     }).then(result => {
-      if (!result.success) { bootbox.alert(result.message); }
+      if (!result.success) {
+        bootbox.alert(result.message);
+      }
     });
   },
 
   rollback() {
     return ajax("/admin/backups/rollback.json", {
-      type: 'POST'
+      type: "POST"
     }).then(result => {
       if (!result.success) {
         bootbox.alert(result.message);

@@ -34,12 +34,17 @@ describe JsLocaleHelper do
   end
 
   context "message format" do
+    def message_format_filename(locale)
+      Rails.root + "lib/javascripts/locale/#{locale}.js"
+    end
 
     def setup_message_format(format)
+      filename = message_format_filename('en')
+      compiled = JsLocaleHelper.compile_message_format(filename, 'en', format)
+
       @ctx = MiniRacer::Context.new
       @ctx.eval('MessageFormat = {locale: {}};')
-      @ctx.load(Rails.root + 'lib/javascripts/locale/en.js')
-      compiled = JsLocaleHelper.compile_message_format('en', format)
+      @ctx.load(filename)
       @ctx.eval("var test = #{compiled}")
     end
 
@@ -110,48 +115,48 @@ describe JsLocaleHelper do
     end
 
     it 'load pluralizations rules before precompile' do
-      message = JsLocaleHelper.compile_message_format('ru', 'format')
+      message = JsLocaleHelper.compile_message_format(message_format_filename('ru'), 'ru', 'format')
       expect(message).not_to match 'Plural Function not found'
     end
   end
 
   it 'performs fallbacks to english if a translation is not available' do
-    JsLocaleHelper.set_translations('en',       "en" => {
+    JsLocaleHelper.set_translations('en', "en" => {
         "js" => {
-          "only_english"      => "1-en",
-          "english_and_site"  => "3-en",
-          "english_and_user"  => "5-en",
-          "all_three"         => "7-en",
+          "only_english" => "1-en",
+          "english_and_site" => "3-en",
+          "english_and_user" => "5-en",
+          "all_three" => "7-en",
         }
       })
 
-    JsLocaleHelper.set_translations('ru',       "ru" => {
+    JsLocaleHelper.set_translations('ru', "ru" => {
         "js" => {
-          "only_site"         => "2-ru",
-          "english_and_site"  => "3-ru",
-          "site_and_user"     => "6-ru",
-          "all_three"         => "7-ru",
+          "only_site" => "2-ru",
+          "english_and_site" => "3-ru",
+          "site_and_user" => "6-ru",
+          "all_three" => "7-ru",
         }
       })
 
-    JsLocaleHelper.set_translations('uk',       "uk" => {
+    JsLocaleHelper.set_translations('uk', "uk" => {
         "js" => {
-          "only_user"         => "4-uk",
-          "english_and_user"  => "5-uk",
-          "site_and_user"     => "6-uk",
-          "all_three"         => "7-uk",
+          "only_user" => "4-uk",
+          "english_and_user" => "5-uk",
+          "site_and_user" => "6-uk",
+          "all_three" => "7-uk",
         }
       })
 
     expected = {
-      "none"              => "[uk.js.none]",
-      "only_english"      => "1-en",
-      "only_site"         => "2-ru",
-      "english_and_site"  => "3-ru",
-      "only_user"         => "4-uk",
-      "english_and_user"  => "5-uk",
-      "site_and_user"     => "6-uk",
-      "all_three"         => "7-uk",
+      "none" => "[uk.js.none]",
+      "only_english" => "1-en",
+      "only_site" => "2-ru",
+      "english_and_site" => "3-ru",
+      "only_user" => "4-uk",
+      "english_and_user" => "5-uk",
+      "site_and_user" => "6-uk",
+      "all_three" => "7-uk",
     }
 
     SiteSetting.default_locale = 'ru'
